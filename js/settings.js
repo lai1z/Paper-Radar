@@ -1,11 +1,23 @@
-document.addEventListener('DOMContentLoaded', () => {
-  initSettings();
+let sharedFilterConfig = null;
+
+document.addEventListener('DOMContentLoaded', async () => {
+  await initSettings();
   initEventListeners();
   fetchGitHubStats();
 });
 
 // 初始化设置，从localStorage加载已保存的设置
-function initSettings() {
+async function initSettings() {
+  try {
+    const response = await fetch(`config/interest-filter.json?v=${Date.now()}`, { cache: 'no-store' });
+    if (response.ok) {
+      sharedFilterConfig = await response.json();
+      localStorage.setItem('preferredKeywords', JSON.stringify(sharedFilterConfig.keywords || []));
+      localStorage.setItem('preferredAuthors', JSON.stringify(sharedFilterConfig.authors || []));
+    }
+  } catch (error) {
+    console.warn('无法读取每日任务筛选配置，继续使用浏览器本地设置:', error);
+  }
   // 关键词偏好设置
   loadKeywordPreferences();
   // 作者偏好设置
@@ -127,7 +139,12 @@ function addKeywordTag(keyword) {
   // 创建新的关键词标签
   const tagElement = document.createElement('span');
   tagElement.className = 'category-button tag-appear';
-  tagElement.innerHTML = `${keyword} <button class="remove-tag">×</button>`;
+  tagElement.appendChild(document.createTextNode(`${keyword} `));
+  const keywordRemoveButton = document.createElement('button');
+  keywordRemoveButton.className = 'remove-tag';
+  keywordRemoveButton.type = 'button';
+  keywordRemoveButton.textContent = '×';
+  tagElement.appendChild(keywordRemoveButton);
   
   // 添加删除按钮事件
   const removeButton = tagElement.querySelector('.remove-tag');
@@ -180,7 +197,12 @@ function addAuthorTag(author) {
   // 创建新的作者标签
   const tagElement = document.createElement('span');
   tagElement.className = 'category-button tag-appear';
-  tagElement.innerHTML = `${author} <button class="remove-tag">×</button>`;
+  tagElement.appendChild(document.createTextNode(`${author} `));
+  const authorRemoveButton = document.createElement('button');
+  authorRemoveButton.className = 'remove-tag';
+  authorRemoveButton.type = 'button';
+  authorRemoveButton.textContent = '×';
+  tagElement.appendChild(authorRemoveButton);
   
   // 添加删除按钮事件
   const removeButton = tagElement.querySelector('.remove-tag');
@@ -303,6 +325,41 @@ function initEventListeners() {
   // 重置设置按钮
   const resetSettingsButton = document.getElementById('resetSettings');
   resetSettingsButton.addEventListener('click', resetSettings);
+
+  const syncCrawlerSettingsButton = document.getElementById('syncCrawlerSettings');
+  syncCrawlerSettingsButton.addEventListener('click', syncCrawlerSettings);
+}
+
+function collectTagValues(containerId) {
+  return Array.from(document.getElementById(containerId).querySelectorAll('.category-button'))
+    .map(tag => tag.textContent.trim().replace('×', '').trim())
+    .filter(Boolean);
+}
+
+function syncCrawlerSettings() {
+  const keywords = collectTagValues('selectedKeywords');
+  const authors = collectTagValues('selectedAuthors');
+  if (keywords.length === 0 && authors.length === 0) {
+    showNotification('请至少添加一个关键词或作者。', 'info');
+    return;
+  }
+
+  saveSettings();
+  const config = {
+    version: 1,
+    enabled: true,
+    keywords,
+    authors,
+    matching: {
+      fields: ['title', 'summary', 'categories', 'comment'],
+      fuzzy_threshold: sharedFilterConfig?.matching?.fuzzy_threshold || 0.84
+    }
+  };
+  const content = JSON.stringify(config, null, 2) + '\n';
+  const owner = DATA_CONFIG.repoOwner;
+  const repo = DATA_CONFIG.repoName;
+  window.open(`https://github.com/${owner}/${repo}/edit/main/config/interest-filter.json`, '_blank', 'noopener');
+  copyToClipboard(content, '配置已复制；请在 GitHub 编辑器中全选替换并提交。');
 }
 
 // 复制关键词到剪切板
