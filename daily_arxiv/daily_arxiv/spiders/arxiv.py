@@ -2,6 +2,8 @@ import scrapy
 import os
 import re
 
+from daily_arxiv.interest_filter import InterestFilter
+
 
 class ArxivSpider(scrapy.Spider):
     def __init__(self, *args, **kwargs):
@@ -13,6 +15,11 @@ class ArxivSpider(scrapy.Spider):
         self.start_urls = [
             f"https://arxiv.org/list/{cat}/new" for cat in self.target_categories
         ]  # 起始URL（计算机科学领域的最新论文）
+        config_path = os.environ.get("INTEREST_FILTER_CONFIG", "../config/interest-filter.json")
+        self.interest_filter = InterestFilter.from_file(config_path)
+        self.seen_ids = set()
+        self.candidate_count = 0
+        self.matched_count = 0
 
     name = "arxiv"  # 爬虫名称
     allowed_domains = ["arxiv.org"]  # 允许爬取的域名
@@ -25,14 +32,17 @@ class ArxivSpider(scrapy.Spider):
             if href and "item" in href:
                 anchors.append(int(href.split("item")[-1]))
 
-        # 遍历每篇论文的详细信息
+        replacement_start = anchors[-1] if anchors else None
+
+        # Each arXiv list page already contains all metadata needed for filtering.
+        # Parsing it here avoids one API request per paper and the resulting 429s.
         for paper in response.css("dl dt"):
             paper_anchor = paper.css("a[name^='item']::attr(name)").get()
             if not paper_anchor:
                 continue
                 
             paper_id = int(paper_anchor.split("item")[-1])
-            if anchors and paper_id >= anchors[-1]:
+            if replacement_start is not None and paper_id >= replacement_start:
                 continue
 
             # 获取论文ID
@@ -41,37 +51,43 @@ class ArxivSpider(scrapy.Spider):
                 continue
                 
             arxiv_id = abstract_link.split("/")[-1]
+            if arxiv_id in self.seen_ids:
+                continue
+            self.seen_ids.add(arxiv_id)
             
             # 获取对应的论文描述部分 (dd元素)
             paper_dd = paper.xpath("following-sibling::dd[1]")
             if not paper_dd:
                 continue
             
-            # 提取论文分类信息 - 在subjects部分
-            subjects_text = paper_dd.css(".list-subjects .primary-subject::text").get()
-            if not subjects_text:
-                # 如果找不到主分类，尝试其他方式获取分类
-                subjects_text = paper_dd.css(".list-subjects::text").get()
-            
-            if subjects_text:
-                # 解析分类信息，通常格式如 "Computer Vision and Pattern Recognition (cs.CV)"
-                # 提取括号中的分类代码
-                categories_in_paper = re.findall(r'\(([^)]+)\)', subjects_text)
-                
-                # 检查论文分类是否与目标分类有交集
-                paper_categories = set(categories_in_paper)
-                if paper_categories.intersection(self.target_categories):
-                    yield {
-                        "id": arxiv_id,
-                        "categories": list(paper_categories),  # 添加分类信息用于调试
-                    }
-                    self.logger.info(f"Found paper {arxiv_id} with categories {paper_categories}")
-                else:
-                    self.logger.debug(f"Skipped paper {arxiv_id} with categories {paper_categories} (not in target {self.target_categories})")
-            else:
-                # 如果无法获取分类信息，记录警告但仍然返回论文（保持向后兼容）
-                self.logger.warning(f"Could not extract categories for paper {arxiv_id}, including anyway")
-                yield {
-                    "id": arxiv_id,
-                    "categories": [],
-                }
+            def clean(selector):
+                return " ".join(part.strip() for part in selector.xpath(".//text()").getall() if part.strip())
+
+            subjects_text = clean(paper_dd.css(".list-subjects"))
+            categories = re.findall(r"\(([a-z-]+\.[A-Za-z-]+)\)", subjects_text)
+            item = {
+                "id": arxiv_id,
+                "authors": [clean(author) for author in paper_dd.css(".list-authors a")],
+                "title": re.sub(r"^Title:\s*", "", clean(paper_dd.css(".list-title"))),
+                "categories": list(dict.fromkeys(categories)),
+                "comment": re.sub(r"^Comments:\s*", "", clean(paper_dd.css(".list-comments"))) or None,
+                "summary": clean(paper_dd.css("p.mathjax")),
+            }
+            self.candidate_count += 1
+            result = self.interest_filter.match(item)
+            if not result.matched:
+                continue
+            item["filter_match"] = {
+                "keywords": list(result.keywords),
+                "authors": list(result.authors),
+            }
+            self.matched_count += 1
+            yield item
+
+    def closed(self, reason):
+        self.logger.info(
+            "Interest filter: %d/%d unique papers matched (enabled=%s)",
+            self.matched_count,
+            self.candidate_count,
+            self.interest_filter.enabled,
+        )
