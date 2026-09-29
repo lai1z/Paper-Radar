@@ -367,10 +367,24 @@ function matchPapersByKeywordsOrAuthor(papers, keywords, author) {
   });
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+async function syncBrowserPreferencesFromCrawlerConfig() {
+  try {
+    const response = await fetch(`config/interest-filter.json?v=${Date.now()}`, { cache: 'no-store' });
+    if (!response.ok) return;
+    const config = await response.json();
+    localStorage.setItem('preferredKeywords', JSON.stringify(config.keywords || []));
+    localStorage.setItem('preferredAuthors', JSON.stringify(config.authors || []));
+  } catch (error) {
+    console.warn('无法读取每日任务筛选配置，继续使用浏览器本地设置:', error);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
   initEventListeners();
 
   fetchGitHubStats();
+
+  await syncBrowserPreferencesFromCrawlerConfig();
 
   // 加载用户关键词
   loadUserKeywords();
