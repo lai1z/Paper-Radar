@@ -44,6 +44,11 @@ jobs:
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | sh
         uv sync
+
+    - name: Validate interest filter
+      run: |
+        source .venv/bin/activate
+        python -m unittest discover -s daily_arxiv/tests -v
         
     - name: Crawl arXiv papers
       id: crawl_step
@@ -68,6 +73,7 @@ jobs:
         export LANGUAGE="${{ vars.LANGUAGE }}"
         export CATEGORIES="${{ vars.CATEGORIES }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
+        export INTEREST_FILTER_CONFIG="../config/interest-filter.json"
         
         # 使用Scrapy爬取
         # Use Scrapy to crawl
@@ -78,6 +84,9 @@ jobs:
             echo "爬取失败，未生成数据文件 / Crawling failed, no data file generated"
             exit 1
         fi
+
+        paper_count=$(wc -l < "../data/${today}.jsonl")
+        echo "关键词预筛选后保留 ${paper_count} 篇论文 / ${paper_count} papers remain after interest filtering"
         
         echo "crawl_date=$today" >> $GITHUB_OUTPUT
         echo "爬取完成 / Crawling completed"
@@ -133,6 +142,7 @@ jobs:
         export OPENAI_BASE_URL=${{ secrets.OPENAI_BASE_URL }}
         export LANGUAGE="${{ vars.LANGUAGE }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
+        export INTEREST_FILTER_CONFIG="../config/interest-filter.json"
         
         python enhance.py --data ../data/${today}.jsonl
         
