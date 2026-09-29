@@ -37,6 +37,26 @@
   gap: 32px;
 }
 
+.crawler-sync-note {
+  padding: 16px 18px;
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  border-radius: var(--radius-md);
+  background: rgba(102, 126, 234, 0.08);
+  color: var(--text-color);
+  line-height: 1.6;
+}
+
+.crawler-sync-note p {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+}
+
+.crawler-sync-note code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(100, 116, 139, 0.12);
+}
+
 .settings-section {
   display: flex;
   flex-direction: column;
