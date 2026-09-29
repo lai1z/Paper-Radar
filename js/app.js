@@ -287,21 +287,159 @@ function getPapersByCategory(paperData, category) {
   return papers;
 }
 
+// ===== 关键词匹配辅助函数 =====
+// 后台把 "A | B | C" 视为同一个主题的多种写法（同义关键词）。
+// 网页端之前只做整串 includes，因此带 | 的主题永远匹配不到，
+// 这里实现与 daily_arxiv/interest_filter.py 相同的语义。
+
+function normalizeMatchText(value) {
+  return String(value == null ? '' : value)
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[-_/]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// "V-JEPA | VJEPA | JEV" -> ["V-JEPA", "VJEPA", "JEV"]
+function getKeywordAliases(keyword) {
+  return String(keyword == null ? '' : keyword)
+    .split('|')
+    .map(part => part.trim())
+    .filter(Boolean);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const MATCH_SENTENCE_RE = /[\n.!?;:]+/;
+const MATCH_THRESHOLD = 0.84;
+
+// 中文用子串匹配，英文和缩写按词边界匹配（避免 "jev" 命中 "JevVibe"）
+function aliasMatchesText(alias, normalizedText) {
+  const needle = normalizeMatchText(alias);
+  if (!needle || !normalizedText) return false;
+  if (/[\u3400-\u9fff]/.test(needle)) return normalizedText.includes(needle);
+  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(needle)}(?![a-z0-9])`).test(normalizedText);
+}
+
+// 单个词的近似匹配：允许 model/models 这类词形变化，也能容忍少量拼写差异
+function tokensAreSimilar(query, candidate, threshold) {
+  if (query === candidate) return true;
+  if (Math.min(query.length, candidate.length) < 5) return false;
+  const shorter = query.length <= candidate.length ? query : candidate;
+  const longer = query.length <= candidate.length ? candidate : query;
+  if (longer.startsWith(shorter) && longer.length - shorter.length <= 2) return true;
+  const matches = longestCommonSubsequenceLength(shorter, longer);
+  return (2 * matches) / (shorter.length + longer.length) >= threshold;
+}
+
+function longestCommonSubsequenceLength(a, b) {
+  let previous = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = new Array(b.length + 1).fill(0);
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = a[i - 1] === b[j - 1] ? previous[j - 1] + 1 : Math.max(previous[j], current[j - 1]);
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+// 多词短语要求各词出现在同一句、且彼此靠近，避免整段摘要里散落的词凑成命中
+function aliasMatchesAnywhere(alias, rawText, normalizedText, threshold) {
+  const needle = normalizeMatchText(alias);
+  if (!needle || !normalizedText) return false;
+  if (aliasMatchesText(needle, normalizedText)) return true;
+
+  const queryTokens = needle.split(' ');
+  const textTokens = normalizedText.split(' ');
+  if (queryTokens.length === 1) {
+    return textTokens.some(token => tokensAreSimilar(queryTokens[0], token, threshold));
+  }
+
+  return String(rawText == null ? '' : rawText).split(MATCH_SENTENCE_RE).some(sentence => {
+    const sentenceTokens = normalizeMatchText(sentence).split(' ').filter(Boolean);
+    if (sentenceTokens.length === 0) return false;
+    const positions = queryTokens.map(queryToken => {
+      const found = [];
+      sentenceTokens.forEach((token, index) => {
+        if (tokensAreSimilar(queryToken, token, threshold)) found.push(index);
+      });
+      return found;
+    });
+    if (positions.some(found => found.length === 0)) return false;
+    const span = queryTokens.length + 4;
+    return positions[0].some(anchor => {
+      const nearest = positions.map(found => found.reduce(
+        (best, index) => (Math.abs(index - anchor) < Math.abs(best - anchor) ? index : best),
+        found[0],
+      ));
+      return Math.max(...nearest) - Math.min(...nearest) < span;
+    });
+  });
+}
+
+function keywordMatchesText(keyword, text, threshold = MATCH_THRESHOLD) {
+  const normalizedText = normalizeMatchText(text);
+  if (!normalizedText) return false;
+  return getKeywordAliases(keyword).some(alias => aliasMatchesAnywhere(alias, text, normalizedText, threshold));
+}
+
+// 两个条目是否是同一个主题（只要有任意一种写法相同）
+function isSameTopic(keyword, topic) {
+  const aliases = getKeywordAliases(keyword).map(normalizeMatchText);
+  const topicAliases = getKeywordAliases(topic).map(normalizeMatchText);
+  return aliases.some(alias => topicAliases.includes(alias));
+}
+
+function paperMatchesKeyword(paper, keyword) {
+  if (!keyword) return false;
+  // 抓取阶段已经算过主题命中，优先采信，保证网页与后台筛选完全一致
+  const crawledTopics = Array.isArray(paper.filterMatch) ? paper.filterMatch : [];
+  if (crawledTopics.some(topic => isSameTopic(keyword, topic))) return true;
+  // 旧数据没有 filter_match 字段时退回文本匹配
+  return keywordMatchesText(keyword, getPaperKeywordText(paper));
+}
+
+// 文本兜底时把网页端能拿到的字段都用上（摘要、原始 abstract、分类）
+function getPaperKeywordText(paper) {
+  const categories = Array.isArray(paper.category) ? paper.category.join(' ') : (paper.category || '');
+  return [paper.title || '', paper.summary || '', paper.details || '', categories].join(' ');
+}
+
+function paperMatchesAuthor(paper, author) {
+  if (!author) return false;
+  const authorsText = normalizeMatchText(paper.authors || '');
+  if (!authorsText) return false;
+  return getKeywordAliases(author).some(alias => authorsText.includes(normalizeMatchText(alias)));
+}
+
+function filterMatchedKeywords(paper, keywords) {
+  return (keywords || []).filter(keyword => paperMatchesKeyword(paper, keyword));
+}
+
+// 高亮时使用原始写法（保留连字符），否则 "v jepa" 匹配不到正文里的 "V-JEPA"
+function expandKeywordsForHighlight(keywords) {
+  const terms = [];
+  (keywords || []).forEach(keyword => {
+    getKeywordAliases(keyword).forEach(alias => {
+      if (terms.indexOf(alias) === -1) terms.push(alias);
+    });
+  });
+  return terms;
+}
+
 // 根据keywords匹配论文（复用现有逻辑：关键词之间是"或"关系）
 function matchPapersByKeywords(papers, keywords) {
   if (!keywords || keywords.length === 0) return papers.map(p => ({ ...p, isMatched: false, matchReason: null }));
 
   return papers.map(paper => {
-    const matches = keywords.some(keyword => {
-      const searchText = `${paper.title} ${paper.summary}`.toLowerCase();
-      return searchText.includes(keyword.toLowerCase());
-    });
+    const matches = keywords.some(keyword => paperMatchesKeyword(paper, keyword));
 
     if (matches) {
-      const matchedKeywords = keywords.filter(keyword => {
-        const searchText = `${paper.title} ${paper.summary}`.toLowerCase();
-        return searchText.includes(keyword.toLowerCase());
-      });
+      const matchedKeywords = filterMatchedKeywords(paper, keywords);
       return {
         ...paper,
         isMatched: true,
@@ -317,16 +455,10 @@ function matchPapersByAuthor(papers, query_authors) {
   if (!query_authors) return papers.map(p => ({ ...p, isMatched: false, matchReason: null }));
 
   return papers.map(paper => {
-    const matches = query_authors.some(author => {
-      const searchText = `${paper.authors}`.toLowerCase();
-      return searchText.includes(author.toLowerCase());
-    });
+    const matches = query_authors.some(author => paperMatchesAuthor(paper, author));
 
     if (matches) {
-      const matchedAuthors = query_authors.filter(author => {
-        const searchText = `${paper.authors}`.toLowerCase();
-        return searchText.includes(author.toLowerCase());
-      });
+      const matchedAuthors = query_authors.filter(author => paperMatchesAuthor(paper, author));
       return {
         ...paper,
         isMatched: true,
@@ -940,6 +1072,7 @@ function parseJsonlData(jsonlText, date) {
         details: paper.summary || '',
         date: date,
         id: paper.id,
+        filterMatch: paper.filter_match && Array.isArray(paper.filter_match.keywords) ? paper.filter_match.keywords : [],
         motivation: paper.AI && paper.AI.motivation ? paper.AI.motivation : '',
         method: paper.AI && paper.AI.method ? paper.AI.method : '',
         result: paper.AI && paper.AI.result ? paper.AI.result : '',
@@ -1194,27 +1327,25 @@ function renderPapers() {
         const aMatchesKeyword = activeKeywords.length > 0 ? 
           activeKeywords.some(keyword => {
             // 仅在标题和摘要中搜索关键词
-            const searchText = `${a.title} ${a.summary}`.toLowerCase();
-            return searchText.includes(keyword.toLowerCase());
+            return paperMatchesKeyword(a, keyword);
           }) : false;
           
         const aMatchesAuthor = activeAuthors.length > 0 ?
           activeAuthors.some(author => {
             // 仅在作者中搜索作者名
-            return a.authors.toLowerCase().includes(author.toLowerCase());
+            return paperMatchesAuthor(a, author);
           }) : false;
           
         const bMatchesKeyword = activeKeywords.length > 0 ?
           activeKeywords.some(keyword => {
             // 仅在标题和摘要中搜索关键词
-            const searchText = `${b.title} ${b.summary}`.toLowerCase();
-            return searchText.includes(keyword.toLowerCase());
+            return paperMatchesKeyword(b, keyword);
           }) : false;
           
         const bMatchesAuthor = activeAuthors.length > 0 ?
           activeAuthors.some(author => {
             // 仅在作者中搜索作者名
-            return b.authors.toLowerCase().includes(author.toLowerCase());
+            return paperMatchesAuthor(b, author);
           }) : false;
       
         // a和b的匹配状态（关键词或作者匹配都算）
@@ -1230,13 +1361,12 @@ function renderPapers() {
       filteredPapers.forEach(paper => {
         const matchesKeyword = activeKeywords.length > 0 ?
           activeKeywords.some(keyword => {
-            const searchText = `${paper.title} ${paper.summary}`.toLowerCase();
-            return searchText.includes(keyword.toLowerCase());
+            return paperMatchesKeyword(paper, keyword);
           }) : false;
           
         const matchesAuthor = activeAuthors.length > 0 ?
           activeAuthors.some(author => {
-            return paper.authors.toLowerCase().includes(author.toLowerCase());
+            return paperMatchesAuthor(paper, author);
           }) : false;
           
         // 添加匹配标记（用于后续高亮整个论文卡片）
@@ -1247,7 +1377,7 @@ function renderPapers() {
           paper.matchReason = [];
           if (matchesKeyword) {
             const matchedKeywords = activeKeywords.filter(keyword => 
-              `${paper.title} ${paper.summary}`.toLowerCase().includes(keyword.toLowerCase())
+              paperMatchesKeyword(paper, keyword)
             );
             if (matchedKeywords.length > 0) {
               paper.matchReason.push(`关键词: ${matchedKeywords.join(', ')}`);
@@ -1255,7 +1385,7 @@ function renderPapers() {
           }
           if (matchesAuthor) {
             const matchedAuthors = activeAuthors.filter(author => 
-              paper.authors.toLowerCase().includes(author.toLowerCase())
+              paperMatchesAuthor(paper, author)
             );
             if (matchedAuthors.length > 0) {
               paper.matchReason.push(`作者: ${matchedAuthors.join(', ')}`);
@@ -1273,27 +1403,25 @@ function renderPapers() {
       const aMatchesKeyword = activeKeywords.length > 0 ? 
         activeKeywords.some(keyword => {
           // 仅在标题和摘要中搜索关键词
-          const searchText = `${a.title} ${a.summary}`.toLowerCase();
-          return searchText.includes(keyword.toLowerCase());
+          return paperMatchesKeyword(a, keyword);
         }) : false;
         
       const aMatchesAuthor = activeAuthors.length > 0 ?
         activeAuthors.some(author => {
           // 仅在作者中搜索作者名
-          return a.authors.toLowerCase().includes(author.toLowerCase());
+          return paperMatchesAuthor(a, author);
         }) : false;
         
       const bMatchesKeyword = activeKeywords.length > 0 ?
         activeKeywords.some(keyword => {
           // 仅在标题和摘要中搜索关键词
-          const searchText = `${b.title} ${b.summary}`.toLowerCase();
-          return searchText.includes(keyword.toLowerCase());
+          return paperMatchesKeyword(b, keyword);
         }) : false;
         
       const bMatchesAuthor = activeAuthors.length > 0 ?
         activeAuthors.some(author => {
           // 仅在作者中搜索作者名
-          return b.authors.toLowerCase().includes(author.toLowerCase());
+          return paperMatchesAuthor(b, author);
         }) : false;
       
       // a和b的匹配状态（关键词或作者匹配都算）
@@ -1309,13 +1437,12 @@ function renderPapers() {
     filteredPapers.forEach(paper => {
       const matchesKeyword = activeKeywords.length > 0 ?
         activeKeywords.some(keyword => {
-          const searchText = `${paper.title} ${paper.summary}`.toLowerCase();
-          return searchText.includes(keyword.toLowerCase());
+          return paperMatchesKeyword(paper, keyword);
         }) : false;
         
       const matchesAuthor = activeAuthors.length > 0 ?
         activeAuthors.some(author => {
-          return paper.authors.toLowerCase().includes(author.toLowerCase());
+          return paperMatchesAuthor(paper, author);
         }) : false;
         
       // 添加匹配标记（用于后续高亮整个论文卡片）
@@ -1326,7 +1453,7 @@ function renderPapers() {
         paper.matchReason = [];
         if (matchesKeyword) {
           const matchedKeywords = activeKeywords.filter(keyword => 
-            `${paper.title} ${paper.summary}`.toLowerCase().includes(keyword.toLowerCase())
+            paperMatchesKeyword(paper, keyword)
           );
           if (matchedKeywords.length > 0) {
             paper.matchReason.push(`关键词: ${matchedKeywords.join(', ')}`);
@@ -1334,7 +1461,7 @@ function renderPapers() {
         }
         if (matchesAuthor) {
           const matchedAuthors = activeAuthors.filter(author => 
-            paper.authors.toLowerCase().includes(author.toLowerCase())
+            paperMatchesAuthor(paper, author)
           );
           if (matchedAuthors.length > 0) {
             paper.matchReason.push(`作者: ${matchedAuthors.join(', ')}`);
@@ -1374,7 +1501,7 @@ function renderPapers() {
     // 组合需要高亮的词：关键词 + 文本搜索
     const titleSummaryTerms = [];
     if (activeKeywords.length > 0) {
-      titleSummaryTerms.push(...activeKeywords);
+      titleSummaryTerms.push(...expandKeywordsForHighlight(activeKeywords));
     }
     if (textSearchQuery && textSearchQuery.trim().length > 0) {
       titleSummaryTerms.push(textSearchQuery.trim());
@@ -1456,7 +1583,7 @@ function showPaperDetails(paper, paperIndex) {
   
   // 组合高亮词：关键词 + 文本搜索
   const modalTitleTerms = [];
-  if (activeKeywords.length > 0) modalTitleTerms.push(...activeKeywords);
+  if (activeKeywords.length > 0) modalTitleTerms.push(...expandKeywordsForHighlight(activeKeywords));
   if (textSearchQuery && textSearchQuery.trim().length > 0) modalTitleTerms.push(textSearchQuery.trim());
   // 高亮标题
   const highlightedTitle = modalTitleTerms.length > 0 
