@@ -146,10 +146,13 @@ jobs:
           --scores-out /tmp/screen-${today}.jsonl \
           --threshold "${{ vars.SCREEN_THRESHOLD }}" \
           --max-papers "${{ vars.SCREEN_MAX_PAPERS }}" \
+          --tail-threshold "${{ vars.SCREEN_TAIL_THRESHOLD }}" \
+          --tail-max "${{ vars.SCREEN_TAIL_MAX }}" \
           --workers 8
 
-        remaining=$(wc -l < ../data/${today}.jsonl)
-        echo "闸门后剩余 ${remaining} 篇论文进入 AI 总结 / ${remaining} papers continue to summarization"
+        total=$(wc -l < ../data/${today}.jsonl)
+        raw=$(grep -c '"skip_ai": true' ../data/${today}.jsonl || true)
+        echo "闸门后共 ${total} 篇：$((total - raw)) 篇进入 AI 总结，${raw} 篇长尾仅收录（不调用 AI）"
 
     - name: AI Enhancement Processing
       if: steps.dedup_check.outputs.has_new_content == 'true'
