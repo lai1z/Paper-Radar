@@ -284,7 +284,8 @@ function getPapersByCategory(paperData, category) {
   } else if (paperData[category]) {
     papers = paperData[category];
   }
-  return papers;
+  // “All” 视图同样按相关度从高到低排序
+  return [...papers].sort((a, b) => (b.relevance || 0) - (a.relevance || 0));
 }
 
 // ===== 关键词匹配（纯文本“包含”筛选）=====
@@ -969,14 +970,20 @@ function parseJsonlData(jsonlText, date) {
         result[primaryCategory] = [];
       }
       
-      const summary = paper.AI && paper.AI.tldr ? paper.AI.tldr : paper.summary;
+      // 只有真正做过 AI 总结的论文才有 TL;DR；仅收录的论文不要再把摘要塞进 TL;DR（会重复显示）
+      const hasAi = !!(paper.AI && paper.AI.tldr);
+      const abstract = paper.summary || '';
+      const shortAbstract = abstract.length > 240 ? abstract.slice(0, 240).trimEnd() + ' …' : abstract;
       
       result[primaryCategory].push({
         title: paper.title,
         url: paper.abs || paper.pdf || `https://arxiv.org/abs/${paper.id}`,
         authors: Array.isArray(paper.authors) ? paper.authors.join(', ') : paper.authors,
         category: allCategories,
-        summary: summary,
+        summary: hasAi ? paper.AI.tldr : shortAbstract,
+        tldr: hasAi ? paper.AI.tldr : '',
+        hasAi: hasAi,
+        relevance: typeof paper.relevance === 'number' ? paper.relevance : 0,
         details: paper.summary || '',
         date: date,
         id: paper.id,
@@ -991,6 +998,11 @@ function parseJsonlData(jsonlText, date) {
     } catch (error) {
       console.error('解析JSON行失败:', error, line);
     }
+  });
+
+  // 每个分类内部按相关度从高到低排序（老数据没有分数时保持原顺序）
+  Object.values(result).forEach(list => {
+    list.sort((a, b) => (b.relevance || 0) - (a.relevance || 0));
   });
   
   return result;
@@ -1554,8 +1566,9 @@ function showPaperDetails(paper, paperIndex) {
       <p><strong>Date: </strong>${formatDate(paper.date)}</p>
       
       
-      <h3>TL;DR</h3>
-      <p>${highlightedSummary}</p>
+      ${paper.tldr
+        ? `<h3>TL;DR</h3><p>${highlightedSummary}</p>`
+        : '<p class="raw-note" style="padding:8px 12px;border-radius:8px;background:rgba(127,127,127,0.12);">仅收录：这篇论文相关度中等，没有做 AI 总结，下面是原始摘要。</p>'}
       
       <div class="paper-sections">
         ${paper.motivation ? `<div class="paper-section"><h4>Motivation</h4><p>${highlightedMotivation}</p></div>` : ''}
