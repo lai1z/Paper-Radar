@@ -2329,9 +2329,9 @@ footer {
 
 /* 相关度评分徽标（右上角） */
 .paper-card-score {
-    position: absolute;
-    top: 10px;
-    right: 12px;
+    display: inline-block;
+    margin-left: 6px;
+    vertical-align: middle;
     font-size: 12px;
     font-weight: 600;
     padding: 2px 8px;
