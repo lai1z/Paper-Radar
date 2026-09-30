@@ -99,7 +99,7 @@ class Judge:
         payload = {
             "model": self.model,
             "temperature": 0,
-            "max_tokens": 96,
+            "max_tokens": 512,
             "messages": [
                 {"role": "system", "content": JUDGE_INSTRUCTIONS},
                 {
@@ -122,19 +122,23 @@ class Judge:
             content = (message.get("content") or "").strip().upper()
             if not content:
                 content = (message.get("reasoning") or "").strip().upper()
-            if re.search(r"\bYES\b", content):
-                return True
-            if re.search(r"\bNO\b", content):
-                return False
+            # 优先看开头，模型通常先给结论；否则看结尾（思考过程在前的模型）
+            head = content[:60]
+            head_match = re.search(r"\b(YES|NO)\b", head)
+            if head_match:
+                return head_match.group(1) == "YES", content
+            all_matches = re.findall(r"\b(YES|NO)\b", content)
+            if all_matches:
+                return all_matches[-1] == "YES", content
             self.unparsed += 1
-            if self.unparsed <= 2:
-                print(f"  judge unparsed (len={len(content)}): {content[:120]!r}", file=sys.stderr)
-            return None
+            if self.unparsed <= 3:
+                print(f"  judge unparsed (len={len(content)}): {content[:160]!r}", file=sys.stderr)
+            return None, content
         except Exception as error:  # noqa: BLE001
             self.errors += 1
             if self.errors <= 3:
                 print(f"  judge error: {type(error).__name__}: {error}", file=sys.stderr)
-            return None
+            return None, f"<{type(error).__name__}: {error}>"
 
 
 class Jev:
@@ -250,14 +254,18 @@ def main() -> int:
 
     judge = Judge(base_url, api_key, args.judge_model, args.workers)
     print(f"用 {args.judge_model} 生成参考标注…")
-    labels_raw = parallel(judge.ask, papers, args.workers)
-    judged = [(paper, label) for paper, label in zip(papers, labels_raw) if label is not None]
-    if not judged:
+    judge_results = parallel(judge.ask, papers, args.workers)
+    kept = [(index, label, raw) for index, (label, raw) in enumerate(judge_results) if label is not None]
+    if not kept:
         print("参考标注全部失败，检查模型名或 API 配额", file=sys.stderr)
         return 3
-    positives = sum(1 for _, label in judged if label)
-    print(f"参考标注完成：{len(judged)} 篇有效，其中相关 {positives} 篇"
-          f"（{positives / len(judged):.1%}）；失败 {judge.errors} 篇\n")
+    judged_papers = [papers[index] for index, _, _ in kept]
+    labels = [label for _, label, _ in kept]
+    raws = [raw for _, _, raw in kept]
+    positives = sum(1 for label in labels if label)
+    print(f"参考标注完成：{len(labels)} 篇有效，其中相关 {positives} 篇"
+          f"（{positives / len(labels):.1%}）；调用失败 {judge.errors} 篇，"
+          f"未解析 {judge.unparsed} 篇\n")
 
     config = json.loads((ROOT / "config" / "interest-filter.json").read_text(encoding="utf-8"))
     keyword_filter = InterestFilter(config)
@@ -268,14 +276,14 @@ def main() -> int:
             "categories": paper.get("categories", []),
             "comment": paper.get("comment") or "",
         }).matched
-        for paper, _ in judged
+        for paper in judged_papers
     ]
     broad_pred = [
         bool(BROAD_NET_RE.search(f"{paper.get('title','')} {paper.get('summary','')}"))
-        for paper, _ in judged
+        for paper in judged_papers
     ]
 
-    jev_probs: list[float | None] = [None] * len(judged)
+    jev_probs: list[float | None] = [None] * len(judged_papers)
     jev = None
     if not args.skip_jev:
         jev = Jev(
@@ -285,12 +293,22 @@ def main() -> int:
             args.workers,
         )
         print(f"调用 {args.jev_model} 做语义判定…")
-        jev_probs = parallel(jev.ask, [paper for paper, _ in judged], args.workers)
+        jev_probs = parallel(jev.ask, judged_papers, args.workers)
         ok = sum(1 for value in jev_probs if value is not None)
         print(f"Jev 返回 {ok}/{len(jev_probs)} 篇，输入 {jev.input_tokens} tokens，"
               f"实付 ${jev.cost:.4f}\n")
+        values = sorted(value for value in jev_probs if value is not None)
+        if values:
+            buckets = {
+                ">=0.9": sum(1 for value in values if value >= 0.9),
+                "0.7-0.9": sum(1 for value in values if 0.7 <= value < 0.9),
+                "0.5-0.7": sum(1 for value in values if 0.5 <= value < 0.7),
+                "0.3-0.5": sum(1 for value in values if 0.3 <= value < 0.5),
+                "<0.3": sum(1 for value in values if value < 0.3),
+            }
+            print(f"Jev 概率分布：{buckets}（最小 {values[0]:.2f}，中位 {values[len(values)//2]:.2f}，"
+                  f"最大 {values[-1]:.2f}）\n")
 
-    labels = [label for _, label in judged]
     rows = []
     rows.append(("keywords(当前配置)", keywords_pred, "免费"))
     rows.append(("broad_net(免费大网)", broad_pred, "免费"))
@@ -316,14 +334,18 @@ def main() -> int:
         report_rows.append({"approach": name, "note": note, **result})
 
     missed = []
-    for (paper, label), pred in zip(judged, keywords_pred):
-        if label and not pred:
-            missed.append({"id": paper.get("id"), "date": paper.get("_date"), "title": paper.get("title")})
+    for index, (paper, label) in enumerate(zip(judged_papers, labels)):
+        if label and not keywords_pred[index]:
+            missed.append({
+                "id": paper.get("id"),
+                "date": paper.get("_date"),
+                "title": paper.get("title"),
+                "jev": jev_probs[index],
+            })
     print(f"\n关键词漏掉、但参考标注认为相关的论文：{len(missed)} 篇")
     recovered = 0
     for entry in missed[:15]:
-        index = next(i for i, (paper, _) in enumerate(judged) if paper.get("id") == entry["id"])
-        probability = jev_probs[index]
+        probability = entry["jev"]
         flag = ""
         if probability is not None and probability >= 0.5:
             recovered += 1
@@ -331,20 +353,37 @@ def main() -> int:
         print(f"   {entry['date']} {entry['id']}  {entry['title'][:88]}{flag}")
     print(f"   （前 15 篇里，jev>=0.5 能补回 {recovered} 篇；样本共漏 {len(missed)} 篇）")
 
+    audit = [
+        {
+            "id": paper.get("id"),
+            "date": paper.get("_date"),
+            "title": paper.get("title"),
+            "judge": label,
+            "judge_raw": (raw or "")[:200],
+            "keywords": keywords_pred[index],
+            "broad_net": broad_pred[index],
+            "jev": jev_probs[index],
+        }
+        for index, (paper, label, raw) in enumerate(zip(judged_papers, labels, raws))
+    ]
+
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "recall_report.json").write_text(
         json.dumps(
             {
                 "dates": dates,
-                "papers": len(judged),
+                "papers": len(labels),
                 "positives": positives,
                 "judge_model": args.judge_model,
+                "judge_unparsed": judge.unparsed,
+                "judge_errors": judge.errors,
                 "jev_model": args.jev_model,
                 "jev_cost_usd": jev.cost if jev else None,
                 "jev_input_tokens": jev.input_tokens if jev else None,
                 "approaches": report_rows,
                 "keyword_missed_but_relevant": missed,
+                "papers_detail": audit,
             },
             ensure_ascii=False,
             indent=2,
