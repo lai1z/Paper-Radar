@@ -191,6 +191,15 @@ def main():
         language,
         args.max_workers
     ) if to_summarize else []
+
+    # 检查点缓存里可能没有后来新增的字段，按 id 从当日数据回填（例如相关度分数）
+    metadata = {item["id"]: item for item in data}
+    for item in processed_data:
+        if item is None:
+            continue
+        source = metadata.get(item.get("id"))
+        if source and "relevance" in source:
+            item["relevance"] = source["relevance"]
     
     # 保存结果
     temporary_file = target_file + ".tmp"
