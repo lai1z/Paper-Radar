@@ -23,6 +23,8 @@ jobs:
       JEV_MODEL: typesafe/jev-1.13
       THRESHOLD: ${{ github.event.inputs.threshold || vars.SCREEN_THRESHOLD }}
       MAX_PAPERS: ${{ vars.SCREEN_MAX_PAPERS }}
+      TAIL_THRESHOLD: ${{ vars.SCREEN_TAIL_THRESHOLD }}
+      TAIL_MAX: ${{ vars.SCREEN_TAIL_MAX }}
     steps:
       - uses: actions/checkout@v4
 
@@ -48,6 +50,8 @@ jobs:
             --scores-out /tmp/scores.jsonl \
             --threshold "$THRESHOLD" \
             --max-papers "$MAX_PAPERS" \
+            --tail-threshold "$TAIL_THRESHOLD" \
+            --tail-max "$TAIL_MAX" \
             --workers 8
 
       - name: Report score distribution
@@ -63,10 +67,11 @@ jobs:
               raise SystemExit(0)
           rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
           kept = sum(1 for r in rows if r.get("screen") == "kept")
+          tail = sum(1 for r in rows if r.get("screen") == "tail")
           rejected = sum(1 for r in rows if r.get("screen") == "rejected")
           failed = sum(1 for r in rows if r.get("screen") == "fail_open")
           over_limit = sum(1 for r in rows if r.get("screen") == "over_daily_limit")
-          print(f"候选 {len(rows)} 篇：保留 {kept} 篇，低于阈值 {rejected} 篇，"
+          print(f"候选 {len(rows)} 篇：AI 总结 {kept} 篇，长尾仅收录 {tail} 篇，低于阈值 {rejected} 篇，"
                 f"超过每日上限 {over_limit} 篇，判定失败按保留 {failed} 篇")
           scores = [r["jev_score"] for r in rows if r.get("jev_score") is not None]
           buckets = {"0.9-1.0": 0, "0.7-0.9": 0, "0.5-0.7": 0, "0.3-0.5": 0, "0.0-0.3": 0}
