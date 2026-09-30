@@ -2,8 +2,6 @@ import scrapy
 import os
 import re
 
-from daily_arxiv.interest_filter import InterestFilter
-
 
 class ArxivSpider(scrapy.Spider):
     def __init__(self, *args, **kwargs):
@@ -15,11 +13,8 @@ class ArxivSpider(scrapy.Spider):
         self.start_urls = [
             f"https://arxiv.org/list/{cat}/new" for cat in self.target_categories
         ]  # 起始URL（计算机科学领域的最新论文）
-        config_path = os.environ.get("INTEREST_FILTER_CONFIG", "../config/interest-filter.json")
-        self.interest_filter = InterestFilter.from_file(config_path)
         self.seen_ids = set()
         self.candidate_count = 0
-        self.matched_count = 0
 
     name = "arxiv"  # 爬虫名称
     allowed_domains = ["arxiv.org"]  # 允许爬取的域名
@@ -74,20 +69,8 @@ class ArxivSpider(scrapy.Spider):
                 "summary": clean(paper_dd.css("p.mathjax")),
             }
             self.candidate_count += 1
-            result = self.interest_filter.match(item)
-            if not result.matched:
-                continue
-            item["filter_match"] = {
-                "keywords": list(result.keywords),
-                "authors": list(result.authors),
-            }
-            self.matched_count += 1
+            # 关键词不再参与筛选：全部论文先落盘，交给 Jev 语义闸门分流
             yield item
 
     def closed(self, reason):
-        self.logger.info(
-            "Interest filter: %d/%d unique papers matched (enabled=%s)",
-            self.matched_count,
-            self.candidate_count,
-            self.interest_filter.enabled,
-        )
+        self.logger.info("Crawled %d unique papers, all handed to the Jev screening stage", self.candidate_count)
