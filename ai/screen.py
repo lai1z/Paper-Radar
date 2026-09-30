@@ -185,13 +185,6 @@ def main() -> int:
     kept_ids = {item["id"] for item in kept}
     cutoff = kept_scored[-1][0] if kept_scored else None
 
-    # 把相关度分数写进论文记录，页面据此排序与展示
-    score_by_id = {item["id"]: score for item, (score, _) in zip(papers, results)}
-    for item in kept:
-        score = score_by_id.get(item["id"])
-        if score is not None:
-            item["relevance"] = round(float(score), 3)
-
     # 长尾：核心之外、分数仍达到 tail_threshold 的论文，按分数取前 tail_max，只收录不总结。
     # 注意：被每日上限砍掉的高分论文也在这里，它们排在长尾最前面。
     tail_candidates = sorted(
@@ -210,6 +203,13 @@ def main() -> int:
         item["skip_ai"] = True
     kept = kept + [item for _, item in tail_scored]
     tail_cutoff = tail_scored[-1][0] if tail_scored else None
+
+    # 把相关度分数写进最终要发布的每条记录（核心 + 长尾），页面据此排序
+    score_by_id = {item["id"]: score for item, (score, _) in zip(papers, results)}
+    for item in kept:
+        score = score_by_id.get(item["id"])
+        if score is not None:
+            item["relevance"] = round(float(score), 3)
 
     rejected: list[dict] = []
     scored_lines = []
