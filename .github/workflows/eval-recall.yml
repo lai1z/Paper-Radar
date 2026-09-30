@@ -39,14 +39,15 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           JEV_API_KEY: ${{ secrets.JEV_API_KEY || secrets.OPENAI_API_KEY }}
           JEV_BASE_URL: ${{ secrets.JEV_BASE_URL || 'https://openrouter.ai/api/v1' }}
-          JUDGE_MODEL: ${{ github.event.inputs.judge_model || 'deepseek/deepseek-v4.1-flash' }}
         run: |
-          python3 eval/recall_eval.py \
-            --dates "${{ github.event.inputs.dates || '2026-09-21,2026-09-23' }}" \
-            --limit "${{ github.event.inputs.limit || '0' }}" \
-            --workers "${{ github.event.inputs.workers || '8' }}" \
-            --judge-model "${{ github.event.inputs.judge_model || 'deepseek/deepseek-v4.1-flash' }}" \
-            --jev-model "${{ github.event.inputs.jev_model || 'typesafe/jev-1.13' }}" \
+          set -e
+          ARGS=()
+          if [ -n "${{ github.event.inputs.dates }}" ]; then ARGS+=(--dates "${{ github.event.inputs.dates }}"); fi
+          if [ -n "${{ github.event.inputs.limit }}" ]; then ARGS+=(--limit "${{ github.event.inputs.limit }}"); fi
+          if [ -n "${{ github.event.inputs.workers }}" ]; then ARGS+=(--workers "${{ github.event.inputs.workers }}"); fi
+          if [ -n "${{ github.event.inputs.judge_model }}" ]; then ARGS+=(--judge-model "${{ github.event.inputs.judge_model }}"); fi
+          if [ -n "${{ github.event.inputs.jev_model }}" ]; then ARGS+=(--jev-model "${{ github.event.inputs.jev_model }}"); fi
+          python3 eval/recall_eval.py "${ARGS[@]}" \
             --owner "${{ github.repository_owner }}" \
             --repo "${{ github.event.repository.name }}" \
             --out eval-out
