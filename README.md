@@ -1,4 +1,4 @@
-# 📚 arXiv 每日论文精选（可定制）
+# 📡 Paper Radar · 每日 arXiv 精选
 
 > 每天自动把 arXiv 的上千篇新投稿，筛成一份只属于你自己方向的短名单。
 
@@ -36,7 +36,7 @@ arXiv 每天新增上千篇论文，真正和你相关的那几十篇散在分�
 
 ## 版权与来源
 
-本项目是基于 [dw-dengwei/daily-arXiv-ai-enhanced](https://github.com/dw-dengwei/daily-arXiv-ai-enhanced) 修改的 fork，遵循上游的 Apache-2.0（仓库内 LICENSE 为 Modified Apache License）。原始版权与许可证保持不变（见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)）。**使用或再分发本仓库时，请一并保留上游署名与许可证。**
+本项目是基于 [dw-dengwei/daily-arXiv-ai-enhanced](https://github.com/dw-dengwei/daily-arXiv-ai-enhanced) 修改的 fork，原作者 **Wei Deng、Jian Guan**，遵循上游的 Apache-2.0（仓库内 LICENSE 为 Modified Apache License）。原始版权与许可证保持不变（见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)）。**使用或再分发本仓库时，请一并保留上游署名与许可证。**
 
 ## 每日流程与 Jev 语义闸门
 
