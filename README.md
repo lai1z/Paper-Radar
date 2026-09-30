@@ -2,12 +2,16 @@
 
 This repository is deployed to automatically crawl arXiv papers relevant to my research interests on a daily basis.
 
-## 关键词预筛选
+## 每日流程与 Jev 语义闸门
 
-每日任务读取 [`config/interest-filter.json`](config/interest-filter.json)，在调用 AI 之前根据论文标题、摘要、分类、备注和作者进行筛选。设置页会读取同一配置；修改关键词后点击“应用到每日任务”，把自动复制的 JSON 粘贴到打开的 GitHub 编辑器并提交。下一次定时运行或手动运行会使用新配置。
+每日任务不再用关键词筛选论文，流程是：按分类全量抓取 → 七天去重 → **Jev 语义闸门** → AI 总结 → 生成页面数据。
 
-- `enabled` 为 `true` 时必须至少填写一个关键词或作者，防止误处理全部论文。
-- 多个关键词之间是“或”关系。
-- 同一主题的别名用 `|` 分隔，例如 `vision language action | VLA`。
-- 模糊匹配支持大小写、连字符、词序和轻微拼写差异；语义近义词请显式写成别名，避免不可控的误匹配。
-- 爬虫直接读取 arXiv 每日列表里的完整元数据，不再逐篇调用 arXiv API。
+- 抓取：按 `CATEGORIES` 变量里的分类（默认 `cs.CV,cs.AI,cs.LG,cs.RO,cs.GR`）读取 arXiv 每日列表里的完整元数据，不再逐篇调用 arXiv API，也不在爬虫里丢弃论文。
+- 闸门：`ai/screen.py` 把每篇的标题、摘要和分类交给 TypeSafe Jev（`typesafe/jev-1.13`，OpenRouter 的 System One 决策接口），它返回“属于目标领域”的概率；默认阈值 0.5，可用仓库变量 `SCREEN_THRESHOLD` 调整。判定失败时保留论文（fail-open），并把全部论文的分数写到工作流产物里，便于事后复盘或换阈值重跑。
+- 总结：`ai/enhance.py` 只处理通过闸门的论文，并开启并发（`--max_workers`）。
+
+领域定义写死在 `ai/screen.py` 的 `DOMAIN_TRUE` / `DOMAIN_FALSE` 两段文字里，改这两段就等于改闸门口径；离线评测脚本 `eval/recall_eval.py` 用同一套定义做对照实验。
+
+## 页面上的关键词筛选
+
+设置页里的关键词只是浏览用的字面筛选：输入 `world model`，页面就只显示标题或摘要里包含这个词的论文。比较时忽略大小写、空格、连字符和下划线，因此 `V-JEPA` 也能命中 `VJEPA`；多个词用逗号分隔、`|` 表示或。这些设置只存在浏览器本地，不影响每日抓取。
