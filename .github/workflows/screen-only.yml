@@ -1,0 +1,89 @@
+# 只抓取 + 只跑 Jev 闸门，不调用任何总结模型；用于验证召回量与阈值。
+name: screen-only
+
+on:
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: "Jev 概率阈值，留空用仓库变量或默认 0.5"
+        default: ""
+  push:
+    paths:
+      - eval/RUN_SCREEN
+
+permissions:
+  contents: read
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    env:
+      JEV_API_KEY: ${{ secrets.JEV_API_KEY || secrets.OPENAI_API_KEY }}
+      JEV_BASE_URL: ${{ secrets.JEV_BASE_URL || 'https://openrouter.ai/api/v1' }}
+      JEV_MODEL: typesafe/jev-1.13
+      THRESHOLD: ${{ github.event.inputs.threshold || vars.SCREEN_THRESHOLD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv sync
+
+      - name: Crawl arXiv papers
+        run: |
+          source .venv/bin/activate
+          export CATEGORIES="${{ vars.CATEGORIES }}"
+          cd daily_arxiv
+          scrapy crawl arxiv -o /tmp/candidates.jsonl
+          echo "候选论文：$(wc -l < /tmp/candidates.jsonl) 篇"
+
+      - name: Jev screening only (no summarization)
+        run: |
+          source .venv/bin/activate
+          cd ai
+          python screen.py \
+            --data /tmp/candidates.jsonl \
+            --scores-out /tmp/scores.jsonl \
+            --threshold "$THRESHOLD" \
+            --workers 8
+
+      - name: Report score distribution
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+
+          path = pathlib.Path("/tmp/scores.jsonl")
+          if not path.exists():
+              print("没有找到分数文件")
+              raise SystemExit(0)
+          rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+          kept = sum(1 for r in rows if r.get("screen") == "kept")
+          rejected = sum(1 for r in rows if r.get("screen") == "rejected")
+          failed = sum(1 for r in rows if r.get("screen") == "fail_open")
+          print(f"候选 {len(rows)} 篇：保留 {kept} 篇，过滤 {rejected} 篇，判定失败按保留 {failed} 篇")
+          scores = [r["jev_score"] for r in rows if r.get("jev_score") is not None]
+          buckets = {"0.9-1.0": 0, "0.7-0.9": 0, "0.5-0.7": 0, "0.3-0.5": 0, "0.0-0.3": 0}
+          for score in scores:
+              key = ("0.9-1.0" if score >= 0.9 else "0.7-0.9" if score >= 0.7
+                     else "0.5-0.7" if score >= 0.5 else "0.3-0.5" if score >= 0.3 else "0.0-0.3")
+              buckets[key] += 1
+          print("分数分布:", buckets)
+          sensitivity = ", ".join(
+              f">={t}: {sum(1 for s in scores if s >= t)}" for t in (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+          )
+          print("阈值敏感性（保留篇数）:", sensitivity)
+          PY
+
+      - name: Upload scores
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screen-only-${{ github.run_id }}
+          path: |
+            /tmp/scores.jsonl
+            /tmp/candidates.jsonl
+          if-no-files-found: ignore
+          retention-days: 14
