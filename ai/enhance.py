@@ -143,16 +143,14 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
 
     chain = prompt_template | llm
     
-    filter_config_path = Path(os.environ.get("INTEREST_FILTER_CONFIG", "../config/interest-filter.json"))
-    filter_config = filter_config_path.read_text(encoding="utf-8") if filter_config_path.exists() else ""
     signature = hashlib.sha256(
         json.dumps([model_name, language, os.environ.get("OPENAI_BASE_URL", ""),
-                    system, template, Path("structure.py").read_text(encoding="utf-8"), filter_config],
+                    system, template, Path("structure.py").read_text(encoding="utf-8")],
                    ensure_ascii=False).encode("utf-8")
     ).hexdigest()
     return process_with_checkpoint(
         data, lambda item: process_single_item(chain, item, language),
-        Path("../.ai-checkpoints"), signature,
+        Path("../.ai-checkpoints"), signature, workers=max_workers,
     )
 
 
@@ -198,4 +196,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
