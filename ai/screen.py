@@ -41,6 +41,9 @@ INSTRUCTIONS = "Does this arXiv paper belong to the reader's research area descr
 DEFAULT_MODEL = "typesafe/jev-1.13"
 DEFAULT_THRESHOLD = 0.7
 DEFAULT_MAX_PAPERS = 50
+# 长尾：低于核心阈值但仍有参考价值的论文，只收录不总结（不花总结模型的钱）
+DEFAULT_TAIL_THRESHOLD = 0.3
+DEFAULT_TAIL_MAX = 100
 
 
 def load_scope() -> tuple[str, str, str]:
@@ -117,12 +120,16 @@ def main() -> int:
     parser.add_argument("--scores-out", default="", help="全部论文的 Jev 分数，写到 data 目录之外")
     parser.add_argument("--threshold", default="", help="概率下限，默认 0.7")
     parser.add_argument("--max-papers", default="", help=f"每天最多保留多少篇（按分数取前 N），默认 {DEFAULT_MAX_PAPERS}，0 表示不限制")
+    parser.add_argument("--tail-threshold", default="", help=f"长尾收录下限，默认 {DEFAULT_TAIL_THRESHOLD}（不调用总结模型）")
+    parser.add_argument("--tail-max", default="", help=f"长尾每天最多收录多少篇，默认 {DEFAULT_TAIL_MAX}，0 表示不收录长尾")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--model", default=os.environ.get("JEV_MODEL", DEFAULT_MODEL))
     args = parser.parse_args()
 
     threshold = float(args.threshold) if str(args.threshold).strip() else DEFAULT_THRESHOLD
     max_papers = int(args.max_papers) if str(args.max_papers).strip() else DEFAULT_MAX_PAPERS
+    tail_threshold = float(args.tail_threshold) if str(args.tail_threshold).strip() else DEFAULT_TAIL_THRESHOLD
+    tail_max = int(args.tail_max) if str(args.tail_max).strip() else DEFAULT_TAIL_MAX
     base_url = os.environ.get("JEV_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or "https://openrouter.ai/api/v1"
     api_key = os.environ.get("JEV_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
     if not api_key:
@@ -135,7 +142,8 @@ def main() -> int:
     papers = [json.loads(line) for line in data_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     print(
         f"Jev 闸门：{len(papers)} 篇候选，模型 {args.model}，阈值 {threshold}，"
-        f"每日上限 {max_papers if max_papers > 0 else '不限'} 篇，领域定义来自 {scope_source}",
+        f"每日上限 {max_papers if max_papers > 0 else '不限'} 篇，"
+        f"长尾 {tail_threshold}~{threshold} 最多收录 {tail_max} 篇（仅收录，不总结），领域定义来自 {scope_source}",
         file=sys.stderr,
     )
 
@@ -177,6 +185,24 @@ def main() -> int:
     kept_ids = {item["id"] for item in kept}
     cutoff = kept_scored[-1][0] if kept_scored else None
 
+    # 长尾：分数介于 tail_threshold 与核心阈值之间，按分数取前 tail_max，只收录不总结
+    tail_candidates = sorted(
+        (
+            (score, item)
+            for item, (score, _) in zip(papers, results)
+            if score is not None and tail_threshold <= score < threshold and item["id"] not in kept_ids
+        ),
+        key=lambda pair: -pair[0],
+    )
+    tail_scored = tail_candidates[:tail_max] if tail_max > 0 else []
+    tail_ids = {item["id"] for _, item in tail_scored}
+    for item in list(kept) + [item for _, item in tail_scored]:
+        item.pop("skip_ai", None)
+    for _, item in tail_scored:
+        item["skip_ai"] = True
+    kept = kept + [item for _, item in tail_scored]
+    tail_cutoff = tail_scored[-1][0] if tail_scored else None
+
     rejected: list[dict] = []
     scored_lines = []
     for item, (score, _) in zip(papers, results):
@@ -186,6 +212,8 @@ def main() -> int:
             record["screen"] = "fail_open"
         elif item["id"] in kept_ids:
             record["screen"] = "kept"
+        elif item["id"] in tail_ids:
+            record["screen"] = "tail"
         elif item["id"] in over_limit:
             record["screen"] = "over_daily_limit"
         else:
@@ -205,9 +233,11 @@ def main() -> int:
     os.replace(temporary, data_path)
 
     print(
-        f"Jev 闸门完成：阈值 {threshold}、上限 {max_papers if max_papers > 0 else '不限'} -> 保留 {len(kept)} 篇"
+        f"Jev 闸门完成：阈值 {threshold}、上限 {max_papers if max_papers > 0 else '不限'} -> 总结 {len(kept) - len(tail_scored)} 篇"
         + (f"（最低分 {cutoff:.3f}）" if cutoff is not None else "")
-        + f"，过滤 {len(rejected)} 篇，判定失败 {failed} 篇（已按保留处理）；"
+        + f"；长尾仅收录 {len(tail_scored)} 篇"
+        + (f"（最低分 {tail_cutoff:.3f}）" if tail_cutoff is not None else "")
+        + f"；过滤 {len(rejected)} 篇，判定失败 {failed} 篇（已按保留处理）；"
         f"输入 {tokens} tokens，费用 ${cost:.4f}",
         file=sys.stderr,
     )
