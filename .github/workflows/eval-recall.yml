@@ -30,6 +30,11 @@ permissions:
 jobs:
   eval:
     runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+      JEV_API_KEY: ${{ secrets.JEV_API_KEY || secrets.OPENAI_API_KEY }}
+      JEV_BASE_URL: ${{ secrets.JEV_BASE_URL || 'https://openrouter.ai/api/v1' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -50,11 +55,6 @@ jobs:
           PY
 
       - name: Run recall evaluation
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-          JEV_API_KEY: ${{ secrets.JEV_API_KEY || secrets.OPENAI_API_KEY }}
-          JEV_BASE_URL: ${{ secrets.JEV_BASE_URL || 'https://openrouter.ai/api/v1' }}
         run: |
           set -e
           ARGS=()
