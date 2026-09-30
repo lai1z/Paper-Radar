@@ -10,7 +10,7 @@ This repository is deployed to automatically crawl arXiv papers relevant to my r
 - 闸门：`ai/screen.py` 把每篇的标题、摘要和分类交给 TypeSafe Jev（`typesafe/jev-1.13`，OpenRouter 的 System One 决策接口），它返回“属于目标领域”的概率；默认阈值 0.5，可用仓库变量 `SCREEN_THRESHOLD` 调整。判定失败时保留论文（fail-open），并把全部论文的分数写到工作流产物里，便于事后复盘或换阈值重跑。
 - 总结：`ai/enhance.py` 只处理通过闸门的论文，并开启并发（`--max_workers`）。
 
-领域定义写死在 `ai/screen.py` 的 `DOMAIN_TRUE` / `DOMAIN_FALSE` 两段文字里，改这两段就等于改闸门口径；离线评测脚本 `eval/recall_eval.py` 用同一套定义做对照实验。
+领域定义在 [`config/research-scope.json`](config/research-scope.json) 的 `true` / `false` 两段文字里，改这两段就等于改闸门口径；`ai/screen.py`（每日闸门）和 `eval/recall_eval.py`（离线评测）读的是同一份文件，不会各改各的。
 
 ## 页面上的关键词筛选
 
