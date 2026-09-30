@@ -145,6 +145,7 @@ jobs:
           --data ../data/${today}.jsonl \
           --scores-out /tmp/screen-${today}.jsonl \
           --threshold "${{ vars.SCREEN_THRESHOLD }}" \
+          --max-papers "${{ vars.SCREEN_MAX_PAPERS }}" \
           --workers 8
 
         remaining=$(wc -l < ../data/${today}.jsonl)
