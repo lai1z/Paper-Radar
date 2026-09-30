@@ -248,7 +248,7 @@ jobs:
           /tmp/screen-${{ steps.crawl_step.outputs.crawl_date }}.jsonl
         include-hidden-files: true
         if-no-files-found: ignore
-        retention-days: 30
+        retention-days: 7
 
     - name: Convert to Markdown
       if: steps.dedup_check.outputs.has_new_content == 'true'
