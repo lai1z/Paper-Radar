@@ -86,7 +86,7 @@
                 <div class="settings-content">
                     <div class="crawler-sync-note">
                         <strong>每日抓取筛选</strong>
-                        <p>网页是静态页面，浏览器里的设置不会自动传给 GitHub Actions。修改后请点击页面底部的“应用到每日任务”，将配置提交到仓库；下一次运行会先按标题、摘要、分类、备注和作者做模糊匹配，再调用 AI。</p>
+                        <p>这里的关键词只作用于本页的浏览筛选：输入 <code>world model</code>，就只显示标题或摘要里包含这个词的论文（忽略大小写、空格和连字符，所以 <code>V-JEPA</code> 也能命中 <code>VJEPA</code>）。每天抓取哪些论文由 Jev 语义闸门决定，不再读取这里的关键词。</p>
                         <p>同一主题的别名可用 <code>|</code> 分隔，例如：<code>vision language action | VLA</code>。</p>
                     </div>
                     <div class="settings-section">
@@ -153,7 +153,7 @@
                 <div class="settings-actions">
                     <button id="resetSettings" class="button">Reset to Default</button>
                     <button id="saveSettings" class="button primary">Save Settings</button>
-                    <button id="syncCrawlerSettings" class="button primary">应用到每日任务</button>
+                    <button id="syncCrawlerSettings" class="button primary">保存筛选设置</button>
                 </div>
             </div>
         </main>
