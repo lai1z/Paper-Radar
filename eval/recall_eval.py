@@ -93,15 +93,19 @@ class Judge:
         self.prompt_tokens = 0
         self.completion_tokens = 0
         self.errors = 0
+        self.unparsed = 0
 
     def ask(self, item: dict) -> bool | None:
         payload = {
             "model": self.model,
             "temperature": 0,
-            "max_tokens": 16,
+            "max_tokens": 96,
             "messages": [
                 {"role": "system", "content": JUDGE_INSTRUCTIONS},
-                {"role": "user", "content": paper_text(item)[:12000]},
+                {
+                    "role": "user",
+                    "content": "Title and abstract:\n" + paper_text(item)[:12000] + "\n\nAnswer YES or NO:",
+                },
             ],
         }
         try:
@@ -114,11 +118,17 @@ class Judge:
             usage = data.get("usage") or {}
             self.prompt_tokens += int(usage.get("prompt_tokens") or 0)
             self.completion_tokens += int(usage.get("completion_tokens") or 0)
-            content = (data["choices"][0]["message"].get("content") or "").strip().upper()
-            if content.startswith("YES"):
+            message = data["choices"][0]["message"]
+            content = (message.get("content") or "").strip().upper()
+            if not content:
+                content = (message.get("reasoning") or "").strip().upper()
+            if re.search(r"\bYES\b", content):
                 return True
-            if content.startswith("NO"):
+            if re.search(r"\bNO\b", content):
                 return False
+            self.unparsed += 1
+            if self.unparsed <= 2:
+                print(f"  judge unparsed (len={len(content)}): {content[:120]!r}", file=sys.stderr)
             return None
         except Exception as error:  # noqa: BLE001
             self.errors += 1
@@ -214,6 +224,15 @@ def main() -> int:
     parser.add_argument("--repo", default=(os.environ.get("GITHUB_REPOSITORY", "lai1z/daily-arXiv-ai-enhanced").split("/")[-1]))
     parser.add_argument("--out", default="eval-out")
     parser.add_argument("--skip-jev", action="store_true")
+
+    # 允许用 eval/eval_config.json 覆盖默认值，方便用提交文件的方式触发小样本试跑
+    config_file = ROOT / "eval" / "eval_config.json"
+    if config_file.exists():
+        overrides = json.loads(config_file.read_text(encoding="utf-8"))
+        allowed = {"dates", "limit", "workers", "judge_model", "jev_model", "out"}
+        parser.set_defaults(**{key: value for key, value in overrides.items() if key in allowed})
+        print(f"已应用 eval/eval_config.json 覆盖：{overrides}")
+
     args = parser.parse_args()
 
     base_url = os.environ.get("OPENAI_BASE_URL", "")
