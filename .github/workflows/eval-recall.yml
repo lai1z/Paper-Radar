@@ -33,6 +33,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Diagnose credentials (hosts only, never the key itself)
+        run: |
+          python3 - <<'PY'
+          import os
+          import urllib.parse
+
+          def host(name):
+              return urllib.parse.urlparse(os.environ.get(name, "")).netloc or "(empty)"
+
+          print("OPENAI_BASE_URL host :", host("OPENAI_BASE_URL"))
+          print("JEV_BASE_URL host    :", host("JEV_BASE_URL"))
+          print("OPENAI_API_KEY set   :", bool(os.environ.get("OPENAI_API_KEY")))
+          print("JEV_API_KEY set      :", bool(os.environ.get("JEV_API_KEY")))
+          print("JEV key == OPENAI key:", os.environ.get("JEV_API_KEY") == os.environ.get("OPENAI_API_KEY"))
+          PY
+
       - name: Run recall evaluation
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
