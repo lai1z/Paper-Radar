@@ -185,12 +185,13 @@ def main() -> int:
     kept_ids = {item["id"] for item in kept}
     cutoff = kept_scored[-1][0] if kept_scored else None
 
-    # 长尾：分数介于 tail_threshold 与核心阈值之间，按分数取前 tail_max，只收录不总结
+    # 长尾：核心之外、分数仍达到 tail_threshold 的论文，按分数取前 tail_max，只收录不总结。
+    # 注意：被每日上限砍掉的高分论文也在这里，它们排在长尾最前面。
     tail_candidates = sorted(
         (
             (score, item)
             for item, (score, _) in zip(papers, results)
-            if score is not None and tail_threshold <= score < threshold and item["id"] not in kept_ids
+            if score is not None and score >= tail_threshold and item["id"] not in kept_ids
         ),
         key=lambda pair: -pair[0],
     )
