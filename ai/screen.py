@@ -20,6 +20,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+# 兜底定义：正常情况下从 config/research-scope.json 读取，改那份文件即可调整口径
 DOMAIN_TRUE = (
     "The paper studies world models, world simulators, or learned dynamics models for embodied, "
     "robotic, or physical agents. This includes: video generation/diffusion used for world simulation; "
@@ -41,7 +42,33 @@ DEFAULT_MODEL = "typesafe/jev-1.13"
 DEFAULT_THRESHOLD = 0.5
 
 
-def ask_jev(item: dict, base_url: str, api_key: str, model: str, attempts: int = 3) -> tuple[float | None, str]:
+def load_scope() -> tuple[str, str, str]:
+    """读取领域定义；返回 (true 描述, false 描述, 来源路径)。"""
+    candidates = []
+    env_path = os.environ.get("RESEARCH_SCOPE_CONFIG")
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.append(Path("../config/research-scope.json"))
+    candidates.append(Path(__file__).resolve().parent.parent / "config" / "research-scope.json")
+    for path in candidates:
+        try:
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if data.get("true") and data.get("false"):
+                    return str(data["true"]), str(data["false"]), str(path)
+        except Exception as error:  # noqa: BLE001
+            print(f"读取领域定义失败 {path}: {error}", file=sys.stderr)
+    return DOMAIN_TRUE, DOMAIN_FALSE, "(内置兜底定义)"
+
+
+def ask_jev(
+    item: dict,
+    base_url: str,
+    api_key: str,
+    model: str,
+    criteria: dict,
+    attempts: int = 3,
+) -> tuple[float | None, str]:
     payload = {
         "model": model,
         "state": {
@@ -53,7 +80,7 @@ def ask_jev(item: dict, base_url: str, api_key: str, model: str, attempts: int =
             "in_domain": {
                 "type": "noul",
                 "instructions": INSTRUCTIONS,
-                "criteria": {"true": DOMAIN_TRUE, "false": DOMAIN_FALSE},
+                "criteria": criteria,
             }
         },
     }
@@ -100,15 +127,20 @@ def main() -> int:
         return 0
 
     data_path = Path(args.data)
+    domain_true, domain_false, scope_source = load_scope()
+    criteria = {"true": domain_true, "false": domain_false}
     papers = [json.loads(line) for line in data_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    print(f"Jev 闸门：{len(papers)} 篇候选，模型 {args.model}，阈值 {threshold}", file=sys.stderr)
+    print(
+        f"Jev 闸门：{len(papers)} 篇候选，模型 {args.model}，阈值 {threshold}，领域定义来自 {scope_source}",
+        file=sys.stderr,
+    )
 
     results: list[tuple[float | None, str]] = []
     if args.workers > 1 and len(papers) > 1:
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            results = list(pool.map(lambda item: ask_jev(item, base_url, api_key, args.model), papers))
+            results = list(pool.map(lambda item: ask_jev(item, base_url, api_key, args.model, criteria), papers))
     else:
-        results = [ask_jev(item, base_url, api_key, args.model) for item in papers]
+        results = [ask_jev(item, base_url, api_key, args.model, criteria) for item in papers]
 
     kept, rejected, failed = [], [], 0
     tokens = 0
