@@ -7,6 +7,10 @@ on:
   schedule:
     - cron: "30 1 * * *"
   workflow_dispatch:
+  # 提交 eval/RUN_PIPELINE 也可以触发一次完整流程（用于验证；验证完会移除）
+  push:
+    paths:
+      - eval/RUN_PIPELINE
 
 
 permissions:
@@ -73,7 +77,6 @@ jobs:
         export LANGUAGE="${{ vars.LANGUAGE }}"
         export CATEGORIES="${{ vars.CATEGORIES }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
-        export INTEREST_FILTER_CONFIG="../config/interest-filter.json"
         
         # 使用Scrapy爬取
         # Use Scrapy to crawl
@@ -86,7 +89,7 @@ jobs:
         fi
 
         paper_count=$(wc -l < "../data/${today}.jsonl")
-        echo "关键词预筛选后保留 ${paper_count} 篇论文 / ${paper_count} papers remain after interest filtering"
+        echo "本次共抓取 ${paper_count} 篇候选论文，全部交给 Jev 语义闸门 / ${paper_count} candidates handed to the Jev screening stage"
         
         echo "crawl_date=$today" >> $GITHUB_OUTPUT
         echo "爬取完成 / Crawling completed"
@@ -130,6 +133,27 @@ jobs:
                 ;;
         esac
         
+    - name: Jev relevance screening
+      if: steps.dedup_check.outputs.has_new_content == 'true'
+      env:
+        JEV_API_KEY: ${{ secrets.JEV_API_KEY || secrets.OPENAI_API_KEY }}
+        JEV_BASE_URL: ${{ secrets.JEV_BASE_URL || 'https://openrouter.ai/api/v1' }}
+        JEV_MODEL: typesafe/jev-1.13
+      run: |
+        source .venv/bin/activate
+        today=${{ steps.crawl_step.outputs.crawl_date }}
+        echo "开始 Jev 语义闸门... / Starting the Jev relevance gate..."
+
+        cd ai
+        python screen.py \
+          --data ../data/${today}.jsonl \
+          --scores-out /tmp/screen-${today}.jsonl \
+          --threshold "${{ vars.SCREEN_THRESHOLD }}" \
+          --workers 8
+
+        remaining=$(wc -l < ../data/${today}.jsonl)
+        echo "闸门后剩余 ${remaining} 篇论文进入 AI 总结 / ${remaining} papers continue to summarization"
+
     - name: AI Enhancement Processing
       if: steps.dedup_check.outputs.has_new_content == 'true'
       run: |
@@ -142,9 +166,8 @@ jobs:
         export OPENAI_BASE_URL=${{ secrets.OPENAI_BASE_URL }}
         export LANGUAGE="${{ vars.LANGUAGE }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
-        export INTEREST_FILTER_CONFIG="../config/interest-filter.json"
         
-        python enhance.py --data ../data/${today}.jsonl
+        python enhance.py --data ../data/${today}.jsonl --max_workers 8
         
         # 检查AI处理是否成功 / Check if AI processing was successful
         if [ $? -ne 0 ]; then
@@ -168,6 +191,7 @@ jobs:
         path: |
           .ai-checkpoints/
           data/*.jsonl
+          /tmp/screen-${{ steps.crawl_step.outputs.crawl_date }}.jsonl
         include-hidden-files: true
         if-no-files-found: ignore
         retention-days: 30
@@ -429,4 +453,3 @@ jobs:
             fi
           fi
         done
-
