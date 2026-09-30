@@ -1,0 +1,42 @@
+# 只读 OpenRouter 累计消费，用于核对花费；不抓取、不调用模型。
+name: cost-probe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - eval/RUN_COST_PROBE
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+    steps:
+      - name: Read OpenRouter key usage
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          base = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
+          request = urllib.request.Request(
+              base + "/key",
+              headers={"Authorization": "Bearer " + os.environ.get("OPENAI_API_KEY", "")},
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  data = json.load(response).get("data") or {}
+              print("base url:", base)
+              print("key label:", data.get("label"))
+              print("累计消费 usage:", data.get("usage"))
+              print("额度 limit:", data.get("limit"))
+              print("剩余 limit_remaining:", data.get("limit_remaining"))
+          except Exception as error:
+              print(f"读取失败：{type(error).__name__}: {error}")
+          PY
