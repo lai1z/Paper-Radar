@@ -177,14 +177,20 @@ def main():
 
     data = unique_data
     print('Open:', args.data, file=sys.stderr)
-    
-    # 并行处理所有数据
+
+    # 长尾论文（Jev 判定相关度中等）只收录、不调用总结模型
+    raw_items = [item for item in data if item.get("skip_ai")]
+    to_summarize = [item for item in data if not item.get("skip_ai")]
+    if raw_items:
+        print(f'其中 {len(raw_items)} 篇为长尾仅收录，不调用 AI', file=sys.stderr)
+
+    # 并行处理需要总结的论文
     processed_data = process_all_items(
-        data,
+        to_summarize,
         model_name,
         language,
         args.max_workers
-    )
+    ) if to_summarize else []
     
     # 保存结果
     temporary_file = target_file + ".tmp"
@@ -192,6 +198,11 @@ def main():
         for item in processed_data:
             if item is not None:
                 f.write(json.dumps(item) + "\n")
+        for item in raw_items:
+            item = dict(item)
+            item.pop("skip_ai", None)
+            item["AI_status"] = "raw"
+            f.write(json.dumps(item) + "\n")
     os.replace(temporary_file, target_file)
 
 if __name__ == "__main__":
