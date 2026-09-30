@@ -1173,6 +1173,8 @@ function renderPapers() {
         papers = papers.concat(paperData[category]);
       }
     });
+    // All 视图必须在这里再排一次：这里是独立的拼接逻辑，不走 getPapersByCategory
+    papers.sort((a, b) => (b.relevance || 0) - (a.relevance || 0));
   } else if (paperData[currentCategory]) {
     papers = paperData[currentCategory];
   }
