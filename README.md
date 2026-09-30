@@ -8,7 +8,7 @@ This repository is deployed to automatically crawl arXiv papers relevant to my r
 
 - 抓取：按 `CATEGORIES` 变量里的分类（默认 `cs.CV,cs.AI,cs.LG,cs.RO,cs.GR`）读取 arXiv 每日列表里的完整元数据，不再逐篇调用 arXiv API，也不在爬虫里丢弃论文。
 - 闸门：`ai/screen.py` 把每篇的标题、摘要和分类交给 TypeSafe Jev（`typesafe/jev-1.13`，OpenRouter 的 System One 决策接口），它返回“属于目标领域”的概率。四个旋钮：`SCREEN_THRESHOLD`（核心概率下限，默认 0.7）、`SCREEN_MAX_PAPERS`（每天最多总结多少篇，默认 50，0 表示不限制）、`SCREEN_TAIL_THRESHOLD`（长尾收录下限，默认 0.3）和 `SCREEN_TAIL_MAX`（长尾每天最多收录多少篇，默认 100，0 表示不收录长尾）。判定失败时保留论文（fail-open）且不占用每日限额，全部论文的分数写到工作流产物里，便于复盘或换阈值重跑。
-- 长尾论文（分数介于两个阈值之间）只收录标题与原摘要，不调用总结模型；页面和 Markdown 里会标注“仅收录（相关度中等，未做 AI 总结）”。
+- 长尾论文（核心之外、分数仍达到长尾下限的论文，包括被每日上限挤出的高分论文）按分数取前 `SCREEN_TAIL_MAX` 篇，只收录标题与原摘要，不调用总结模型；页面和 Markdown 里会标注“仅收录（相关度中等，未做 AI 总结）”。
 - 总结：`ai/enhance.py` 只处理通过闸门的论文，并开启并发（`--max_workers`）。
 
 领域定义在 [`config/research-scope.json`](config/research-scope.json) 的 `true` / `false` 两段文字里，改这两段就等于改闸门口径；`ai/screen.py`（每日闸门）和 `eval/recall_eval.py`（离线评测）读的是同一份文件，不会各改各的。
