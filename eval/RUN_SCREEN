@@ -1,1 +1,1 @@
-提交这个文件会触发 screen-only 工作流：只抓取 + 只跑 Jev 闸门，不会调用 DS 总结。当前使用 config/research-scope.json 里的新领域定义。
+提交这个文件会触发 screen-only 工作流：只抓取 + 只跑 Jev 闸门，不会调用 DS 总结。当前：收紧后的领域定义 + 默认阈值 0.7。
