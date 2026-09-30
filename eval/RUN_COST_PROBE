@@ -1,0 +1,1 @@
+提交这个文件会触发 cost-probe：只读 OpenRouter 的累计消费，不抓取也不调用模型。
