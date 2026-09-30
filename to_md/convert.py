@@ -16,12 +16,13 @@ if __name__ == "__main__":
         else:
             return len(preference)
 
-    with open(args.data, "r") as f:
+    with open(args.data, "r", encoding="utf-8") as f:
         for line in f:
             data.append(json.loads(line))
 
     categories = set([item["categories"][0] for item in data])
-    template = open("paper_template.md", "r").read()
+    template = open("paper_template.md", "r", encoding="utf-8").read()
+    tail_template = open("tail_template.md", "r", encoding="utf-8").read()
     categories = sorted(categories, key=rank)
     cnt = {cate: 0 for cate in categories}
     for item in data:
@@ -42,31 +43,35 @@ if __name__ == "__main__":
             if item["categories"][0] == cate:
                 # Safely access AI fields with default values
                 ai_data = item.get('AI', {})
-                if not ai_data or not isinstance(ai_data, dict):
-                    print(f"Skipping item '{item.get('title', 'Unknown')}' due to missing or invalid AI data")
-                    continue
-                
-                # Check if all required AI fields are present
                 required_fields = ['tldr', 'motivation', 'method', 'result', 'conclusion']
-                if not all(field in ai_data for field in required_fields):
-                    print(f"Skipping item '{item.get('title', 'Unknown')}' due to incomplete AI fields")
-                    continue
-                
-                papers.append(
-                    template.format(
-                        title=item["title"],
-                        authors=",".join(item["authors"]),
-                        summary=item["summary"],
-                        url=item['abs'],
-                        tldr=ai_data.get('tldr', ''),
-                        motivation=ai_data.get('motivation', ''),
-                        method=ai_data.get('method', ''),
-                        result=ai_data.get('result', ''),
-                        conclusion=ai_data.get('conclusion', ''),
-                        cate=item['categories'][0],
-                        idx=next(idx)
+                if isinstance(ai_data, dict) and all(field in ai_data for field in required_fields):
+                    papers.append(
+                        template.format(
+                            title=item["title"],
+                            authors=",".join(item["authors"]),
+                            summary=item["summary"],
+                            url=item['abs'],
+                            tldr=ai_data.get('tldr', ''),
+                            motivation=ai_data.get('motivation', ''),
+                            method=ai_data.get('method', ''),
+                            result=ai_data.get('result', ''),
+                            conclusion=ai_data.get('conclusion', ''),
+                            cate=item['categories'][0],
+                            idx=next(idx)
+                        )
                     )
-                )
+                else:
+                    # 长尾论文只收录标题与摘要
+                    papers.append(
+                        tail_template.format(
+                            title=item["title"],
+                            authors=",".join(item["authors"]),
+                            summary=item["summary"],
+                            url=item['abs'],
+                            cate=item['categories'][0],
+                            idx=next(idx)
+                        )
+                    )
         markdown += "\n\n".join(papers)
-    with open(args.data.split('_')[0] + '.md', "w") as f:
+    with open(args.data.split('_')[0] + '.md', "w", encoding="utf-8") as f:
         f.write(markdown)
