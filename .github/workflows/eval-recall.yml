@@ -1,0 +1,57 @@
+# 离线评测不同召回方案的召回率与成本；只手动触发，不影响每日抓取流程。
+name: eval-recall
+
+on:
+  workflow_dispatch:
+    inputs:
+      dates:
+        description: "用于评测的历史日期（过滤前），逗号分隔"
+        default: "2026-09-21,2026-09-23"
+      limit:
+        description: "只评测前 N 篇，0 表示全部"
+        default: "0"
+      judge_model:
+        description: "参考标注用的模型"
+        default: "deepseek/deepseek-v4.1-flash"
+      jev_model:
+        description: "语义判定用的决策模型"
+        default: "typesafe/jev-1.13"
+      workers:
+        description: "并发数"
+        default: "8"
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run recall evaluation
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          JEV_API_KEY: ${{ secrets.JEV_API_KEY || secrets.OPENAI_API_KEY }}
+          JEV_BASE_URL: ${{ secrets.JEV_BASE_URL || 'https://openrouter.ai/api/v1' }}
+          JUDGE_MODEL: ${{ inputs.judge_model }}
+        run: |
+          python3 eval/recall_eval.py \
+            --dates "${{ inputs.dates }}" \
+            --limit "${{ inputs.limit }}" \
+            --workers "${{ inputs.workers }}" \
+            --judge-model "${{ inputs.judge_model }}" \
+            --jev-model "${{ inputs.jev_model }}" \
+            --owner "${{ github.repository_owner }}" \
+            --repo "${{ github.event.repository.name }}" \
+            --out eval-out
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recall-eval-report
+          path: eval-out/
+          if-no-files-found: warn
+          retention-days: 30
