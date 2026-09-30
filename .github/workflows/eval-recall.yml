@@ -75,4 +75,4 @@ jobs:
           name: recall-eval-report
           path: eval-out/
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 7
