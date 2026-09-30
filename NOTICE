@@ -1,0 +1,46 @@
+daily-arXiv-ai-enhanced — NOTICE
+================================
+
+本仓库是以下项目的修改版本（GitHub fork）：
+
+  项目名称: daily-arXiv-ai-enhanced
+  上游地址: https://github.com/dw-dengwei/daily-arXiv-ai-enhanced
+  原作者:   Wei Deng (dw-dengwei@outlook.com), Jian Guan (jianguanthu@gmail.com)
+  许可证:   Apache-2.0（仓库内 LICENSE 文本标题为 "Modified Apache License"）
+
+上游的版权、许可证与署名归原作者所有；本仓库完整保留上游的 LICENSE 文件，
+并在此声明相对上游所做的修改。
+
+本仓库相对上游的主要修改
+------------------------
+
+- .github/workflows/run.yml
+    增加 Jev 语义闸门步骤（替换关键词预筛选）、AI 总结并发参数、
+    每次运行的 OpenRouter 花费统计；产物中增加当日 Jev 打分文件。
+- daily_arxiv/daily_arxiv/spiders/arxiv.py
+    爬虫不再按关键词丢弃论文，改为全量写入当日数据。
+- ai/screen.py（新增）
+    调用 TypeSafe Jev（OpenRouter System One 决策接口）做语义相关度判定，
+    支持核心阈值、每日上限、长尾收录、失败时保留（fail-open）。
+- ai/checkpoint.py
+    为逐篇结果持久化加入并发执行支持。
+- ai/enhance.py
+    跳过仅收录的长尾论文，使用并发处理，并把长尾论文原样写入结果。
+- ai/tests/、daily_arxiv/tests/
+    随上述改动更新的单元测试。
+- eval/（新增）
+    离线召回评测脚本、领域定义对照实验，以及只读的消费探针工作流。
+- config/research-scope.json（新增）
+    领域定义（true / false 两段描述），供语义闸门与离线评测共用。
+- js/app.js、js/settings.js、settings.html、index.html
+    页面关键词改为纯文本筛选，不再驱动每日抓取；首页增加项目介绍。
+- to_md/convert.py、to_md/tail_template.md（新增）
+    长尾论文按「仅收录」模板渲染，不再被跳过；模板读取统一为 UTF-8。
+- README.md、NOTICE（新增）
+    文档、署名与许可证说明。
+
+许可证
+------
+
+本仓库的修改部分同样按上游许可证（Apache-2.0 / Modified Apache License）发布。
+再分发时请保留 LICENSE、本 NOTICE，以及上游作者署名。
