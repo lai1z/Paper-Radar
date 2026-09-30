@@ -919,7 +919,8 @@ async function loadPapersByDate(date) {
     renderCategoryFilter(categories);
 
     // 如果URL中有category、json、author或keywords参数，直接返回JSON
-    const hasJsonParams = urlCategoryParam !== null || urlJsonParam !== null || urlAuthorParam !== null || urlKeywordsParam !== null;
+    // 只有显式带上 ?json= 才进入 API 模式；?category=cs.AI 这类链接正常渲染页面
+    const hasJsonParams = urlJsonParam !== null;
     if (hasJsonParams) {
       // 获取基础论文列表（按category或all）
       const targetCategory = urlCategoryParam || urlJsonParam || 'all';
@@ -1464,12 +1465,12 @@ function renderPapers() {
     paperCard.innerHTML = `
       <div class="paper-card-index">${index + 1}</div>
       ${paper.isMatched ? '<div class="match-badge" title="匹配您的搜索条件"></div>' : ''}
-      ${paper.relevance ? `<div class="paper-card-score" title="相关度评分（Jev）">${paper.relevance.toFixed(2)}</div>` : ''}
       <div class="paper-card-header">
         <h3 class="paper-card-title">${highlightedTitle}</h3>
         <p class="paper-card-authors">${formattedAuthors}</p>
         <div class="paper-card-categories">
           ${categoryTags}
+          ${paper.relevance ? `<span class="paper-card-score" title="相关度评分（Jev 语义闸门）">匹配度 ${paper.relevance.toFixed(2)}</span>` : ''}
         </div>
       </div>
       <div class="paper-card-body">
@@ -1797,7 +1798,8 @@ async function loadPapersByDateRange(startDate, endDate) {
     renderCategoryFilter(categories);
 
     // 如果URL中有category、json、author或keywords参数，直接返回JSON
-    const hasJsonParams = urlCategoryParam !== null || urlJsonParam !== null || urlAuthorParam !== null || urlKeywordsParam !== null;
+    // 只有显式带上 ?json= 才进入 API 模式；?category=cs.AI 这类链接正常渲染页面
+    const hasJsonParams = urlJsonParam !== null;
     if (hasJsonParams) {
       // 获取基础论文列表（按category或all）
       const targetCategory = urlCategoryParam || urlJsonParam || 'all';
