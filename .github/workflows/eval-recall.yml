@@ -19,6 +19,10 @@ on:
       workers:
         description: "并发数"
         default: "8"
+  # 也可以提交 eval/RUN_EVAL 来触发一次评测（方便用脚本启动）
+  push:
+    paths:
+      - eval/RUN_EVAL
 
 permissions:
   contents: read
@@ -35,14 +39,14 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           JEV_API_KEY: ${{ secrets.JEV_API_KEY || secrets.OPENAI_API_KEY }}
           JEV_BASE_URL: ${{ secrets.JEV_BASE_URL || 'https://openrouter.ai/api/v1' }}
-          JUDGE_MODEL: ${{ inputs.judge_model }}
+          JUDGE_MODEL: ${{ github.event.inputs.judge_model || 'deepseek/deepseek-v4.1-flash' }}
         run: |
           python3 eval/recall_eval.py \
-            --dates "${{ inputs.dates }}" \
-            --limit "${{ inputs.limit }}" \
-            --workers "${{ inputs.workers }}" \
-            --judge-model "${{ inputs.judge_model }}" \
-            --jev-model "${{ inputs.jev_model }}" \
+            --dates "${{ github.event.inputs.dates || '2026-09-21,2026-09-23' }}" \
+            --limit "${{ github.event.inputs.limit || '0' }}" \
+            --workers "${{ github.event.inputs.workers || '8' }}" \
+            --judge-model "${{ github.event.inputs.judge_model || 'deepseek/deepseek-v4.1-flash' }}" \
+            --jev-model "${{ github.event.inputs.jev_model || 'typesafe/jev-1.13' }}" \
             --owner "${{ github.repository_owner }}" \
             --repo "${{ github.event.repository.name }}" \
             --out eval-out
