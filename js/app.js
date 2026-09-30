@@ -1464,6 +1464,7 @@ function renderPapers() {
     paperCard.innerHTML = `
       <div class="paper-card-index">${index + 1}</div>
       ${paper.isMatched ? '<div class="match-badge" title="匹配您的搜索条件"></div>' : ''}
+      ${paper.relevance ? `<div class="paper-card-score" title="相关度评分（Jev）">${paper.relevance.toFixed(2)}</div>` : ''}
       <div class="paper-card-header">
         <h3 class="paper-card-title">${highlightedTitle}</h3>
         <p class="paper-card-authors">${formattedAuthors}</p>
