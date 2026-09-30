@@ -25,7 +25,8 @@ sys.path.insert(0, str(ROOT / "daily_arxiv"))
 
 from daily_arxiv.interest_filter import InterestFilter  # noqa: E402
 
-DOMAIN_TRUE = (
+# 兜底定义：正常情况下从 config/research-scope.json 读取，与每日闸门共用同一份口径
+DOMAIN_TRUE_FALLBACK = (
     "The paper studies world models, world simulators, or learned dynamics models for embodied, "
     "robotic, or physical agents. This includes: video generation/diffusion used for world simulation; "
     "JEPA-style predictive or joint-embedding architectures; latent dynamics or latent action models; "
@@ -34,12 +35,28 @@ DOMAIN_TRUE = (
     "inference, memory reduction) on any of the above."
 )
 
-DOMAIN_FALSE = (
+DOMAIN_FALSE_FALLBACK = (
     "The paper is outside this scope: it does not study world models or learned dynamics/simulators for "
     "embodied or physical agents. Examples: pure NLP or speech, medical or clinical work, security or code "
     "generation, networking or wireless sensing, generic 3D reconstruction, or video work with no "
     "world-model / embodied-simulation component."
 )
+
+
+def load_scope() -> tuple[str, str, str]:
+    """读取领域定义；返回 (true 描述, false 描述, 来源)。"""
+    path = ROOT / "config" / "research-scope.json"
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("true") and data.get("false"):
+                return str(data["true"]), str(data["false"]), str(path)
+    except Exception as error:  # noqa: BLE001
+        print(f"读取领域定义失败 {path}: {error}", file=sys.stderr)
+    return DOMAIN_TRUE_FALLBACK, DOMAIN_FALSE_FALLBACK, "(内置兜底定义)"
+
+
+DOMAIN_TRUE, DOMAIN_FALSE, SCOPE_SOURCE = load_scope()
 
 JUDGE_INSTRUCTIONS = (
     "Decide whether the following arXiv paper belongs to the reader's research area, described below.\n"
@@ -253,6 +270,7 @@ def main() -> int:
     print(f"样本共 {len(papers)} 篇\n")
 
     judge = Judge(base_url, api_key, args.judge_model, args.workers)
+    print(f"领域定义来源：{SCOPE_SOURCE}")
     print(f"用 {args.judge_model} 生成参考标注…")
     judge_results = parallel(judge.ask, papers, args.workers)
     kept = [(index, label, raw) for index, (label, raw) in enumerate(judge_results) if label is not None]
