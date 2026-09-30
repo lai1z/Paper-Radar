@@ -152,10 +152,31 @@ jobs:
 
     - name: AI Enhancement Processing
       if: steps.dedup_check.outputs.has_new_content == 'true'
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
       run: |
         source .venv/bin/activate
         today=${{ steps.crawl_step.outputs.crawl_date }}
         echo "开始AI增强处理... / Starting AI enhancement processing..."
+        python3 - <<'PY'
+        import json
+        import os
+        import urllib.request
+
+        try:
+            request = urllib.request.Request(
+                os.environ.get("OPENAI_BASE_URL", "").rstrip("/") + "/key",
+                headers={"Authorization": "Bearer " + os.environ.get("OPENAI_API_KEY", "")},
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                usage = (json.load(response).get("data") or {}).get("usage")
+            print(f"OpenRouter 累计消费（跑 DS 前）：${usage}")
+            with open("/tmp/usage_before.txt", "w", encoding="utf-8") as handle:
+                handle.write(str(usage))
+        except Exception as error:  # noqa: BLE001
+            print(f"读取累计消费失败（不影响流程）：{type(error).__name__}: {error}")
+        PY
         
         cd ai
         export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
@@ -171,6 +192,39 @@ jobs:
             exit 1
         fi
         echo "AI增强处理完成 / AI enhancement processing completed"
+
+    - name: Report AI summarization cost
+      if: always()
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+      run: |
+        python3 - <<'PY'
+        import json
+        import os
+        import pathlib
+        import urllib.request
+
+        def current_usage():
+            request = urllib.request.Request(
+                os.environ.get("OPENAI_BASE_URL", "").rstrip("/") + "/key",
+                headers={"Authorization": "Bearer " + os.environ.get("OPENAI_API_KEY", "")},
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return (json.load(response).get("data") or {}).get("usage")
+
+        before_path = pathlib.Path("/tmp/usage_before.txt")
+        if not before_path.exists():
+            print("没有记录到跑 DS 前的累计消费，跳过费用统计")
+            raise SystemExit(0)
+        try:
+            before = float(before_path.read_text(encoding="utf-8"))
+            after = float(current_usage())
+        except Exception as error:  # noqa: BLE001
+            print(f"读取累计消费失败：{type(error).__name__}: {error}")
+            raise SystemExit(0)
+        print(f"本次 AI 总结花费：${after - before:.4f}（累计 ${after:.4f}）")
+        PY
         
     - name: Save AI checkpoints
       if: always()
