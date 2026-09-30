@@ -39,7 +39,7 @@ DOMAIN_FALSE = (
 
 INSTRUCTIONS = "Does this arXiv paper belong to the reader's research area described in the criteria?"
 DEFAULT_MODEL = "typesafe/jev-1.13"
-DEFAULT_THRESHOLD = 0.5
+DEFAULT_THRESHOLD = 0.7
 
 
 def load_scope() -> tuple[str, str, str]:
