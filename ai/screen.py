@@ -40,6 +40,7 @@ DOMAIN_FALSE = (
 INSTRUCTIONS = "Does this arXiv paper belong to the reader's research area described in the criteria?"
 DEFAULT_MODEL = "typesafe/jev-1.13"
 DEFAULT_THRESHOLD = 0.7
+DEFAULT_MAX_PAPERS = 50
 
 
 def load_scope() -> tuple[str, str, str]:
@@ -114,12 +115,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", required=True, help="当日抓取结果 jsonl（会被筛选后的结果覆盖）")
     parser.add_argument("--scores-out", default="", help="全部论文的 Jev 分数，写到 data 目录之外")
-    parser.add_argument("--threshold", default="", help="概率阈值，默认 0.5")
+    parser.add_argument("--threshold", default="", help="概率下限，默认 0.7")
+    parser.add_argument("--max-papers", default="", help=f"每天最多保留多少篇（按分数取前 N），默认 {DEFAULT_MAX_PAPERS}，0 表示不限制")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--model", default=os.environ.get("JEV_MODEL", DEFAULT_MODEL))
     args = parser.parse_args()
 
     threshold = float(args.threshold) if str(args.threshold).strip() else DEFAULT_THRESHOLD
+    max_papers = int(args.max_papers) if str(args.max_papers).strip() else DEFAULT_MAX_PAPERS
     base_url = os.environ.get("JEV_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or "https://openrouter.ai/api/v1"
     api_key = os.environ.get("JEV_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
     if not api_key:
@@ -131,7 +134,8 @@ def main() -> int:
     criteria = {"true": domain_true, "false": domain_false}
     papers = [json.loads(line) for line in data_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     print(
-        f"Jev 闸门：{len(papers)} 篇候选，模型 {args.model}，阈值 {threshold}，领域定义来自 {scope_source}",
+        f"Jev 闸门：{len(papers)} 篇候选，模型 {args.model}，阈值 {threshold}，"
+        f"每日上限 {max_papers if max_papers > 0 else '不限'} 篇，领域定义来自 {scope_source}",
         file=sys.stderr,
     )
 
@@ -142,28 +146,52 @@ def main() -> int:
     else:
         results = [ask_jev(item, base_url, api_key, args.model, criteria) for item in papers]
 
-    kept, rejected, failed = [], [], 0
+    failed = 0
     tokens = 0
     cost = 0.0
-    scored_lines = []
-    for item, (score, note) in zip(papers, results):
+    for _, (_, note) in zip(papers, results):
         if note.startswith("ok:"):
             _, token_text, cost_text = note.split(":", 2)
             tokens += int(token_text)
             cost += float(cost_text)
         elif note.startswith("error:"):
             failed += 1
+
+    # 先按分数排序，再统一决定每篇的最终去向，保证审计文件里的标记就是最终结论
+    eligible = sorted(
+        (
+            (score, item)
+            for item, (score, _) in zip(papers, results)
+            if score is not None and score >= threshold
+        ),
+        key=lambda pair: -pair[0],
+    )
+    fail_open_items = [item for item, (score, _) in zip(papers, results) if score is None]
+    if max_papers > 0 and len(eligible) > max_papers:
+        kept_scored = eligible[:max_papers]
+        over_limit = {item["id"] for _, item in eligible[max_papers:]}
+    else:
+        kept_scored = eligible
+        over_limit = set()
+    kept = [item for _, item in kept_scored] + fail_open_items
+    kept_ids = {item["id"] for item in kept}
+    cutoff = kept_scored[-1][0] if kept_scored else None
+
+    rejected: list[dict] = []
+    scored_lines = []
+    for item, (score, _) in zip(papers, results):
         record = dict(item)
         record["jev_score"] = score
         if score is None:
             record["screen"] = "fail_open"
+        elif item["id"] in kept_ids:
+            record["screen"] = "kept"
+        elif item["id"] in over_limit:
+            record["screen"] = "over_daily_limit"
         else:
-            record["screen"] = "kept" if score >= threshold else "rejected"
+            record["screen"] = "rejected"
         scored_lines.append(json.dumps(record, ensure_ascii=False))
-        # 判定失败时保留论文（fail-open），只有明确低于阈值才丢弃
-        if score is None or score >= threshold:
-            kept.append(item)
-        else:
+        if record["screen"] in ("rejected", "over_daily_limit"):
             rejected.append(record)
 
     if args.scores_out:
@@ -177,8 +205,10 @@ def main() -> int:
     os.replace(temporary, data_path)
 
     print(
-        f"Jev 闸门完成：保留 {len(kept)} 篇，过滤 {len(rejected)} 篇，"
-        f"判定失败 {failed} 篇（已按保留处理）；输入 {tokens} tokens，费用 ${cost:.4f}",
+        f"Jev 闸门完成：阈值 {threshold}、上限 {max_papers if max_papers > 0 else '不限'} -> 保留 {len(kept)} 篇"
+        + (f"（最低分 {cutoff:.3f}）" if cutoff is not None else "")
+        + f"，过滤 {len(rejected)} 篇，判定失败 {failed} 篇（已按保留处理）；"
+        f"输入 {tokens} tokens，费用 ${cost:.4f}",
         file=sys.stderr,
     )
     if not kept:
