@@ -1,10 +1,22 @@
 # Zotero batch import
 
-Open **待读**, choose the export range, and click **导出到 Zotero**. The default exports the current Pending/Read tab and search results. Other options export all pending papers or the whole reading list.
+## Recommended: retrieve metadata and PDFs with Zotero
+
+Open **待读**, choose the range, and click **复制 arXiv ID（获取 PDF）**. In Zotero desktop, select the destination collection, click the toolbar magic wand (**Add Item by Identifier / 通过标识符添加条目**), paste, and press Enter. Do **not** use File → Import from Clipboard for this ID list. The default range is the current Pending/Read tab and search results; other options cover all pending papers or the whole list.
+
+Zotero supports multiple arXiv IDs separated by newlines. Its native lookup uses the official arXiv translator, which obtains source metadata and supplies a `Preprint PDF` attachment. Zotero downloads that attachment, rather than Paper Radar merely adding a PDF link to CSL JSON. This also retrieves publication dates and abstracts missing from older local records. Canonical IDs are validated, deduplicated across versions, and prefixed `arXiv:`; lookup retrieves the current arXiv version. No Zotero API key, browser file download or custom translator is required.
+
+Keep Zotero online and allow it to attach associated PDFs in General settings. Expand the new item and open its PDF to verify completion. Paper Radar only confirms copying; it cannot observe Zotero's import or attachment download. Network failures, unavailable PDFs or attachment settings can prevent completion. As an alternative, open the paper's arXiv abstract page and save it with Zotero Connector. Already imported metadata-only items are not automatically updated by identifier lookup; another import can create duplicates. Inspect Zotero Duplicate Items before merging.
+
+Clipboard denial exposes a selected read-only ID list with instructions for the magic wand. Empty selections clear the fallback and warn that the clipboard was not updated. The operation does not change reading status, delete records, or create Better Notes notes.
+
+## Optional: metadata-only CSL JSON
+
+Expand **仅导出文献信息（不含 PDF）**, then use **下载 CSL JSON** or **复制文献信息**. These retain the original metadata-only export for offline use; neither includes PDF attachments.
 
 In Zotero desktop, choose **File → Import → A file** and open the downloaded `paper-radar-zotero-*.csl.json`. CSL JSON is a native Zotero import format; Better Notes is not required for import. Imported bibliography items can be used in your usual Zotero/Better Notes workflow. This does not create Better Notes notes, transfer PDFs, sync the Zotero library, or change reading status.
 
-If downloading fails (for example, the browser reports a virus scan failure), use **复制到 Zotero**, then **File → Import from Clipboard** in Zotero (Windows/Linux: Ctrl+Shift+Alt+I; macOS: Cmd+Shift+Option+I). This transfers the same CSL JSON without downloading a file or changing security settings. If clipboard permission is denied, a read-only text area appears for manual selection and copying. An empty selection leaves the clipboard unchanged and warns against importing stale clipboard data. This alternative does not diagnose or repair the operating system's download scanner.
+For metadata-only copying, use **复制文献信息**, then **File → Import from Clipboard** in Zotero (Windows/Linux: Ctrl+Shift+Alt+I; macOS: Cmd+Shift+Option+I). This transfers CSL JSON without a browser file download. If clipboard permission is denied, a read-only text area appears with format-specific instructions. This does not diagnose or repair the operating system's download scanner.
 
 The existing **导出备份 / 导入备份** buttons still use the version-1 Paper Radar JSON format, preserving status and saved time. CSL JSON is a bibliography exchange format, not a replacement for that backup.
 
@@ -45,6 +57,13 @@ node tests/zotero-export.browser.cjs
 
 For an installed Edge or Chrome, set `BROWSER_CHANNEL=msedge` or `chrome`. Browser tests use local fixtures and intercept all requests; no API credentials are needed. They verify actual downloaded files and JSON backup restoration. Unit tests cover ID versions, duplicates, Chinese/diacritics, missing/invalid fields, leap dates, unstructured and structured names, input immutability, and the real feed parser.
 
-Manual acceptance: import an exported file in Zotero, check title, separate creators, abstract, publication date and the arXiv URL/Extra field. Import it again and verify duplicate handling in Zotero. The automated tests do not launch Zotero or test Better Notes.
+Automated tests additionally verify sanitized/deduplicated batch IDs (including legacy IDs), all three selection scopes and search, identifier clipboard fallback, distinct import instructions, and that the metadata-only options are collapsed by default.
 
-References: https://www.zotero.org/support/kb/import_from_clipboard and https://github.com/zotero/translators/blob/master/CSL%20JSON.js
+Manual acceptance: copy a small batch of known accessible IDs (e.g. `arXiv:1810.04805` and `arXiv:1706.03762`) to Zotero's magic wand. Check the fetched metadata and open the downloaded child PDFs. Repeat with automatic attachments disabled or the network unavailable and verify the site never reports download success. Import a CSL file separately to check its metadata-only behavior and duplicate handling. The automated tests do not launch Zotero, download its attachments, or test Better Notes.
+
+References:
+- https://www.zotero.org/support/adding_items_to_zotero#add_item_by_identifier
+- https://github.com/zotero/zotero/blob/master/chrome/content/zotero/lookup.js (`saveAttachments: !childItem`)
+- https://github.com/zotero/translators/blob/master/arXiv.org.js (`doSearch`, `Preprint PDF` attachment)
+- https://www.zotero.org/support/kb/import_from_clipboard
+- https://github.com/zotero/translators/blob/master/CSL%20JSON.js
