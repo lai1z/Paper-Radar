@@ -5,6 +5,15 @@ const vm = require('node:vm');
 const {arxivId, dateParts, build} = require('../js/zotero-export.js');
 const paper = {id:'2610.12345v2', title:'具身世界模型：评测与优化 “α”', authorNames:['张三', 'María de la Cruz', {family:'王',given:'小明'}], abstract:'原始摘要\n第二段：机器人 & 视频。', summary:'AI 摘要不能代替原文', published:'2026-10-01T23:30:00-05:00', date:'2026-10-26'};
 
+test('batch lookup contains only unique validated arXiv IDs, including legacy IDs', () => {
+  const result = build([paper, {id:'2610.12345v3'}, {url:'https://arxiv.org/pdf/hep-th/9901001v2.pdf'},
+    {id:'bad\nDOI:10.0000/injection'}, {url:'https://evil.test/abs/2610.11111'}, {id:'2610.22222'}]);
+  assert.equal(result.identifiers, 'arXiv:2610.12345\narXiv:hep-th/9901001\narXiv:2610.22222');
+  assert.equal(result.duplicates, 1);
+  assert.equal(result.skipped, 2);
+  assert.equal(build([]).identifiers, '');
+});
+
 test('UTF-8, original abstract, creators, publication date and arXiv identifiers', () => {
   const result = build([paper]);
   const [item] = JSON.parse(Buffer.from(result.content, 'utf8').toString('utf8'));
