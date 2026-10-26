@@ -182,28 +182,40 @@
     const manualCopy = element('div'); manualCopy.hidden = true;
     const copyText = element('textarea'); copyText.readOnly = true; copyText.rows = 6;
     copyText.style.width = '100%'; copyText.setAttribute('aria-label', '待复制的 Zotero 文献信息');
-    manualCopy.append(element('p', '自动复制不可用。请选中文本并按 Ctrl+C（Mac：⌘C），然后到 Zotero「文件 → 从剪贴板导入」。', 'rl-meta'),
-      copyText, button('全选文献信息', () => { copyText.focus(); copyText.select(); }),
+    const copyHelp = element('p', '', 'rl-meta');
+    manualCopy.append(copyHelp,
+      copyText, button('全选复制内容', () => { copyText.focus(); copyText.select(); }),
       button('收起复制文本', () => { manualCopy.hidden = true; copyText.value = ''; }));
     function exportSelection() {
       papers = read();
       const selected = scope.value === 'all' ? papers : scope.value === 'pending' ? papers.filter(p => p.status === 'pending') : visiblePapers();
       return window.ZoteroExport.build(selected);
     }
-    zotero.append(scope, button('复制到 Zotero', async () => {
+    async function copySelection(withPDF) {
       manualCopy.hidden = true; copyText.value = '';
       let result;
       try { result = exportSelection(); }
       catch { notify('无法读取文献信息，请刷新页面后重试。'); return; }
       if (!result.items.length) { notify('没有可复制的论文。剪贴板未更新，请勿导入上一次的内容。'); return; }
+      const content = withPDF ? result.identifiers : result.content;
+      const instructions = withPDF
+        ? '到 Zotero 点击工具栏魔棒「通过标识符添加条目」，粘贴并按 Enter。Zotero 将联网获取文献信息和 PDF；请等待附件下载完成。不要使用「从剪贴板导入」。'
+        : '到 Zotero「文件 → 从剪贴板导入」。此次仅导入文献信息，不含 PDF。';
       try {
-        await navigator.clipboard.writeText(result.content);
-        notify(`已复制 ${result.items.length} 篇。请到 Zotero「文件 → 从剪贴板导入」（Windows：Ctrl+Shift+Alt+I）。其中 ${result.missing.published} 篇缺少真实发布日期、${result.missing.abstract} 篇缺少原始摘要，相应字段留空。`);
+        await navigator.clipboard.writeText(content);
+        notify(`已复制 ${result.items.length} 篇${withPDF ? '的 arXiv ID' : '的文献信息'}。${instructions}`);
       } catch {
-        copyText.value = result.content; manualCopy.hidden = false; copyText.focus(); copyText.select();
+        copyText.setAttribute('aria-label', withPDF ? '待复制的 arXiv ID' : '待复制的 Zotero 文献信息');
+        copyHelp.textContent = `自动复制不可用。请按 Ctrl+C（Mac：⌘C）复制下方文本，然后${instructions}`;
+        copyText.value = content; manualCopy.hidden = false; copyText.focus(); copyText.select();
         notify('浏览器未允许自动复制，请在文本框中手动复制。');
       }
-    }), button('导出到 Zotero', () => {
+    }
+    zotero.append(scope, button('复制 arXiv ID（获取 PDF）', () => copySelection(true)));
+    const metadata = element('details');
+    metadata.append(element('summary', '仅导出文献信息（不含 PDF）'));
+    const metadataActions = element('div', '', 'rl-actions');
+    metadataActions.append(button('复制文献信息', () => copySelection(false)), button('下载 CSL JSON', () => {
       try {
         const result = exportSelection();
         if (!result.items.length) { notify('没有可导出的论文，请调整范围或搜索条件。'); return; }
@@ -214,9 +226,12 @@
         notify(`已导出 ${result.items.length} 篇；合并重复 ${result.duplicates} 篇，跳过无效 ID ${result.skipped} 篇。缺失字段：标题 ${missing.title}、作者 ${missing.authors}、发布日期 ${missing.published}、原始摘要 ${missing.abstract}。缺失日期留空，未使用抓取日期。`);
       } catch { notify('Zotero 导出失败，请刷新页面或先导出 JSON 备份。'); }
     }));
+    metadata.append(metadataActions);
     list = element('div', '', 'rl-list');
     dialog.append(heading, element('p', '跨日期保存 · 最新加入在前 · 打开论文不会自动标记已读', 'rl-meta'), search, tabs, list,
-      zotero, manualCopy, element('p', '无需下载：点「复制到 Zotero」，再在 Zotero 中选择「文件 → 从剪贴板导入」。也可下载 .csl.json 后通过「文件 → 导入」导入。重复导入可能产生重复条目；不包含 PDF、Better Notes 笔记或阅读状态，备份请使用下方 JSON 功能。', 'rl-meta'),
+      zotero, element('p', '含 PDF 的批量添加：复制 ID → Zotero 工具栏魔棒「通过标识符添加条目」→ 粘贴并按 Enter。文献信息和 PDF 由 Zotero 从 arXiv 获取；下载完成后，展开条目可查看 PDF 附件。Paper Radar 无法确认 Zotero 的下载结果。', 'rl-meta'),
+      element('p', '若没有 PDF：检查 Zotero「设置 → 常规」中的自动附加相关 PDF 选项及 arXiv 网络访问；也可打开论文原文页，用 Zotero Connector 保存。重复添加可能产生重复条目，请在 Zotero「重复条目」中检查。此操作不改变待读状态或 Better Notes 笔记。', 'rl-meta'),
+      metadata, manualCopy,
       element('p', '保存在当前浏览器，关闭后仍保留；清理网站数据或无痕窗口关闭会丢失。换设备请导出并导入备份。', 'rl-meta'), backups);
     // Keep announcements and undo reachable inside the modal's focus boundary.
     const relocateToast = () => (dialog.open ? dialog : document.body).append(toast);
