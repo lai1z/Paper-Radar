@@ -1484,6 +1484,7 @@ function renderPapers() {
       </div>
     `;
     
+    if (window.ReadingList) ReadingList.mount(paperCard.querySelector('.paper-card-footer'), paper);
     paperCard.addEventListener('click', () => {
       currentPaperIndex = index; // 记录当前点击的论文索引
       showPaperDetails(paper, index + 1);
@@ -1494,6 +1495,9 @@ function renderPapers() {
 }
 
 function showPaperDetails(paper, paperIndex) {
+  const readingActions = document.querySelector('.paper-modal-buttons');
+  readingActions.querySelector('[data-reading-id]')?.remove();
+  if (window.ReadingList) ReadingList.mount(readingActions, paper);
   const modal = document.getElementById('paperModal');
   const modalTitle = document.getElementById('modalTitle');
   const modalBody = document.getElementById('modalBody');
