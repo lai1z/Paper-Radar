@@ -12,6 +12,9 @@
     if (typeof value.title !== 'string' || !value.title.trim()) throw new Error('论文标题缺失');
     return {id, title: value.title.slice(0, 2000), summary: String(value.summary || '').slice(0, 30000),
       authors: (Array.isArray(value.authors) ? value.authors.join(', ') : String(value.authors || '')).slice(0, 5000),
+      authorNames: Array.isArray(value.authorNames) ? value.authorNames : Array.isArray(value.authors) ? value.authors : undefined,
+      abstract: typeof value.abstract === 'string' ? value.abstract : typeof value.details === 'string' ? value.details : '',
+      published: typeof value.published === 'string' && value.published ? value.published : typeof value.publicationDate === 'string' ? value.publicationDate : '',
       date: String(value.date || '').slice(0, 40), status: value.status === 'read' ? 'read' : 'pending',
       savedAt: Number.isFinite(value.savedAt) ? value.savedAt : Date.now()};
   };
@@ -88,6 +91,11 @@
     refreshButtons();
     if (dialog.open) render();
   }
+  function visiblePapers() {
+    const query = search.value.trim().toLowerCase();
+    return papers.filter(p => p.status === view && `${p.title} ${p.authors} ${p.summary} ${p.id}`.toLowerCase().includes(query))
+      .sort((a, b) => b.savedAt - a.savedAt);
+  }
   function render() {
     list.replaceChildren();
     tabs.querySelectorAll('button').forEach(tab => {
@@ -96,8 +104,7 @@
       tab.textContent = `${tab.dataset.view === 'pending' ? '待读' : '已读'} (${count})`;
     });
     const query = search.value.trim().toLowerCase();
-    const selected = papers.filter(p => p.status === view && `${p.title} ${p.authors} ${p.summary} ${p.id}`.toLowerCase().includes(query))
-      .sort((a, b) => b.savedAt - a.savedAt);
+    const selected = visiblePapers();
     if (!selected.length) list.append(element('p', query ? '没有匹配的论文，试试标题、作者或 arXiv ID。' : view === 'pending' ? '待读清单是空的。在论文卡片上点「加入待读」，下次就能从这里继续。' : '还没有已读论文。读完后可以手动标记。', 'rl-empty'));
     selected.forEach(paper => {
       const card = element('article', '', 'rl-entry');
@@ -166,8 +173,28 @@
       finally { file.value = ''; }
     };
     backups.append(button('导入备份', () => file.click()), file);
+    const zotero = element('div', '', 'rl-actions');
+    const scope = element('select', '', 'rl-button');
+    scope.setAttribute('aria-label', 'Zotero 导出范围');
+    for (const [value, label] of [['visible', '当前标签和搜索结果'], ['pending', '全部待读'], ['all', '整个阅读清单']]) {
+      const option = element('option', label); option.value = value; scope.append(option);
+    }
+    zotero.append(scope, button('导出到 Zotero', () => {
+      try {
+        papers = read(); // Include changes saved in other tabs before exporting.
+        const selected = scope.value === 'all' ? papers : scope.value === 'pending' ? papers.filter(p => p.status === 'pending') : visiblePapers();
+        const result = window.ZoteroExport.build(selected);
+        if (!result.items.length) { notify('没有可导出的论文，请调整范围或搜索条件。'); return; }
+        const url = URL.createObjectURL(new Blob([result.content], {type: 'application/json;charset=utf-8'}));
+        const link = element('a'); link.href = url; link.download = `paper-radar-zotero-${scope.value}-${new Date().toISOString().slice(0, 10)}.csl.json`;
+        link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+        const missing = result.missing;
+        notify(`已导出 ${result.items.length} 篇；合并重复 ${result.duplicates} 篇，跳过无效 ID ${result.skipped} 篇。缺失字段：标题 ${missing.title}、作者 ${missing.authors}、发布日期 ${missing.published}、原始摘要 ${missing.abstract}。缺失日期留空，未使用抓取日期。`);
+      } catch { notify('Zotero 导出失败，请刷新页面或先导出 JSON 备份。'); }
+    }));
     list = element('div', '', 'rl-list');
     dialog.append(heading, element('p', '跨日期保存 · 最新加入在前 · 打开论文不会自动标记已读', 'rl-meta'), search, tabs, list,
+      zotero, element('p', '在 Zotero 中选择「文件 → 导入 → 文件」，打开 .csl.json。重复导入可能产生重复条目；此导出不包含 PDF、Better Notes 笔记或阅读状态，备份请使用下方 JSON 功能。', 'rl-meta'),
       element('p', '保存在当前浏览器，关闭后仍保留；清理网站数据或无痕窗口关闭会丢失。换设备请导出并导入备份。', 'rl-meta'), backups);
     // Keep announcements and undo reachable inside the modal's focus boundary.
     const relocateToast = () => (dialog.open ? dialog : document.body).append(toast);
