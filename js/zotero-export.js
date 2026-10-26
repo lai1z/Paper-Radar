@@ -1,4 +1,4 @@
-/* Zotero's native CSL JSON importer; no account credentials or network calls. */
+/* Native Zotero identifier lookup and metadata-only CSL JSON; no credentials. */
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -71,7 +71,9 @@
       if (!item.abstract) { missing.abstract++; delete item.abstract; }
       if (!item.issued) missing.published++;
     }
-    return {items, skipped, duplicates, missing, content: JSON.stringify(items, null, 2) + '\n'};
+    // Explicit arXiv prefixes prevent old numeric IDs being interpreted as other identifiers.
+    const identifiers = items.map(item => `arXiv:${item.archive_location}`).join('\n');
+    return {items, skipped, duplicates, missing, identifiers, content: JSON.stringify(items, null, 2) + '\n'};
   }
   return {arxivId, dateParts, authors, build};
 });
