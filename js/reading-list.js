@@ -179,11 +179,33 @@
     for (const [value, label] of [['visible', '当前标签和搜索结果'], ['pending', '全部待读'], ['all', '整个阅读清单']]) {
       const option = element('option', label); option.value = value; scope.append(option);
     }
-    zotero.append(scope, button('导出到 Zotero', () => {
+    const manualCopy = element('div'); manualCopy.hidden = true;
+    const copyText = element('textarea'); copyText.readOnly = true; copyText.rows = 6;
+    copyText.style.width = '100%'; copyText.setAttribute('aria-label', '待复制的 Zotero 文献信息');
+    manualCopy.append(element('p', '自动复制不可用。请选中文本并按 Ctrl+C（Mac：⌘C），然后到 Zotero「文件 → 从剪贴板导入」。', 'rl-meta'),
+      copyText, button('全选文献信息', () => { copyText.focus(); copyText.select(); }),
+      button('收起复制文本', () => { manualCopy.hidden = true; copyText.value = ''; }));
+    function exportSelection() {
+      papers = read();
+      const selected = scope.value === 'all' ? papers : scope.value === 'pending' ? papers.filter(p => p.status === 'pending') : visiblePapers();
+      return window.ZoteroExport.build(selected);
+    }
+    zotero.append(scope, button('复制到 Zotero', async () => {
+      manualCopy.hidden = true; copyText.value = '';
+      let result;
+      try { result = exportSelection(); }
+      catch { notify('无法读取文献信息，请刷新页面后重试。'); return; }
+      if (!result.items.length) { notify('没有可复制的论文。剪贴板未更新，请勿导入上一次的内容。'); return; }
       try {
-        papers = read(); // Include changes saved in other tabs before exporting.
-        const selected = scope.value === 'all' ? papers : scope.value === 'pending' ? papers.filter(p => p.status === 'pending') : visiblePapers();
-        const result = window.ZoteroExport.build(selected);
+        await navigator.clipboard.writeText(result.content);
+        notify(`已复制 ${result.items.length} 篇。请到 Zotero「文件 → 从剪贴板导入」（Windows：Ctrl+Shift+Alt+I）。其中 ${result.missing.published} 篇缺少真实发布日期、${result.missing.abstract} 篇缺少原始摘要，相应字段留空。`);
+      } catch {
+        copyText.value = result.content; manualCopy.hidden = false; copyText.focus(); copyText.select();
+        notify('浏览器未允许自动复制，请在文本框中手动复制。');
+      }
+    }), button('导出到 Zotero', () => {
+      try {
+        const result = exportSelection();
         if (!result.items.length) { notify('没有可导出的论文，请调整范围或搜索条件。'); return; }
         const url = URL.createObjectURL(new Blob([result.content], {type: 'application/json;charset=utf-8'}));
         const link = element('a'); link.href = url; link.download = `paper-radar-zotero-${scope.value}-${new Date().toISOString().slice(0, 10)}.csl.json`;
@@ -194,7 +216,7 @@
     }));
     list = element('div', '', 'rl-list');
     dialog.append(heading, element('p', '跨日期保存 · 最新加入在前 · 打开论文不会自动标记已读', 'rl-meta'), search, tabs, list,
-      zotero, element('p', '在 Zotero 中选择「文件 → 导入 → 文件」，打开 .csl.json。重复导入可能产生重复条目；此导出不包含 PDF、Better Notes 笔记或阅读状态，备份请使用下方 JSON 功能。', 'rl-meta'),
+      zotero, manualCopy, element('p', '无需下载：点「复制到 Zotero」，再在 Zotero 中选择「文件 → 从剪贴板导入」。也可下载 .csl.json 后通过「文件 → 导入」导入。重复导入可能产生重复条目；不包含 PDF、Better Notes 笔记或阅读状态，备份请使用下方 JSON 功能。', 'rl-meta'),
       element('p', '保存在当前浏览器，关闭后仍保留；清理网站数据或无痕窗口关闭会丢失。换设备请导出并导入备份。', 'rl-meta'), backups);
     // Keep announcements and undo reachable inside the modal's focus boundary.
     const relocateToast = () => (dialog.open ? dialog : document.body).append(toast);
