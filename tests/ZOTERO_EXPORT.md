@@ -4,6 +4,8 @@ Open **待读**, choose the export range, and click **导出到 Zotero**. The de
 
 In Zotero desktop, choose **File → Import → A file** and open the downloaded `paper-radar-zotero-*.csl.json`. CSL JSON is a native Zotero import format; Better Notes is not required for import. Imported bibliography items can be used in your usual Zotero/Better Notes workflow. This does not create Better Notes notes, transfer PDFs, sync the Zotero library, or change reading status.
 
+If downloading fails (for example, the browser reports a virus scan failure), use **复制到 Zotero**, then **File → Import from Clipboard** in Zotero (Windows/Linux: Ctrl+Shift+Alt+I; macOS: Cmd+Shift+Option+I). This transfers the same CSL JSON without downloading a file or changing security settings. If clipboard permission is denied, a read-only text area appears for manual selection and copying. An empty selection leaves the clipboard unchanged and warns against importing stale clipboard data. This alternative does not diagnose or repair the operating system's download scanner.
+
 The existing **导出备份 / 导入备份** buttons still use the version-1 Paper Radar JSON format, preserving status and saved time. CSL JSON is a bibliography exchange format, not a replacement for that backup.
 
 ## Metadata contract
