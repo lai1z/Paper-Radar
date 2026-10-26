@@ -1,0 +1,21 @@
+.rl-button {padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--card-bg-color); color: var(--text-color); font: inherit; cursor: pointer; display: inline-block; font-size: 14px;}
+.rl-button:hover, .rl-button[aria-pressed="true"], .rl-saved {background: var(--gradient-light); color: #53368a; border-color: var(--primary-color);}
+.rl-button:focus-visible, .rl-dialog a:focus-visible {outline: 3px solid var(--primary-color); outline-offset: 3px;}
+.rl-dialog {margin: auto; width: min(800px, 94vw); max-height: 90dvh; padding: 24px; border: 1px solid var(--border-color); border-radius: 18px; color: var(--text-color); background: var(--card-bg-color); overflow-y: auto; box-shadow: var(--shadow-lg);}
+.rl-dialog::backdrop {background: rgba(15,23,42,.5); backdrop-filter: blur(3px);}
+.rl-heading {display: flex; justify-content: space-between; align-items: center; gap: 12px;}
+.rl-heading h2 {font-size: 22px;}
+.rl-dialog input[type="search"] {width: 100%; margin: 16px 0 12px; padding: 12px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--background-color); color: var(--text-color); font: inherit;}
+.rl-actions {display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0;}
+.rl-entry {padding: 18px 0; border-bottom: 1px solid var(--border-color); overflow-wrap: anywhere;}
+.rl-title {font-size: 17px; font-weight: 600;}
+.rl-meta {color: var(--text-secondary); font-size: 12px; margin: 8px 0; white-space: pre-line;}
+.rl-entry details {margin: 10px 0; font-size: 14px;}
+.rl-entry summary {cursor: pointer; color: var(--text-secondary);}
+.rl-entry details p {margin-top: 8px; white-space: pre-wrap;}
+.rl-empty {padding: 36px 12px; color: var(--text-secondary); text-align: center;}
+.rl-toast:not(:empty) {position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 20000; padding: 12px 18px; border-radius: 10px; background: #263244; color: white; max-width: 90vw; font-size: 14px; box-shadow: var(--shadow-lg);}
+.rl-toast button {margin-left: 16px; color: #c8d5ff; text-decoration: underline;}
+.rl-dialog .rl-toast:not(:empty) {position: sticky; bottom: 0; left: auto; transform: none; max-width: none;}
+.paper-card-footer {flex-wrap: wrap; gap: 10px;}
+@media (max-width: 600px) {.rl-dialog {padding: 16px;} .header-controls {flex-wrap: wrap;} .paper-modal-buttons {flex-wrap: wrap;} }
