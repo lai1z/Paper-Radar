@@ -17,5 +17,11 @@
 .rl-toast:not(:empty) {position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 20000; padding: 12px 18px; border-radius: 10px; background: #263244; color: white; max-width: 90vw; font-size: 14px; box-shadow: var(--shadow-lg);}
 .rl-toast button {margin-left: 16px; color: #c8d5ff; text-decoration: underline;}
 .rl-dialog .rl-toast:not(:empty) {position: sticky; bottom: 0; left: auto; transform: none; max-width: none;}
+.rl-export-title {font-size:15px; margin:24px 0 10px; padding-top:18px; border-top:1px solid var(--border-color);}
+.rl-export-help {font-size:12px; color:var(--text-secondary); margin:12px 0;}
+.rl-export-help summary {cursor:pointer;}
+.rl-dialog > details {margin:12px 0;}
+.rl-dialog > details > summary {cursor:pointer; font-size:13px;}
+.rl-dialog .rl-title:focus-visible,.digest-saved-dialog .rl-button:focus-visible {outline:2px solid var(--primary-color); outline-offset:4px; border-radius:4px;}
 .paper-card-footer {flex-wrap: wrap; gap: 10px;}
 @media (max-width: 600px) {.rl-dialog {padding: 16px;} .header-controls {flex-wrap: wrap;} .paper-modal-buttons {flex-wrap: wrap;} }

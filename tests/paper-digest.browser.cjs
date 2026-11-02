@@ -2,7 +2,7 @@ const {chromium}=require('playwright');
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const root=path.resolve(__dirname,'..');
 const quote='The gate bypasses video generation on 75.5% of queries and reduces latency by 38%.';
-const item={id:'2610.39367',title:'Utility-WAM: 按需生成未来，改善机器人控制',authors:['研究者 A','研究者 B'],categories:['cs.RO'],summary:quote,AI_status:'success',relevance:0.99,AI:{tldr:'判断什么时候需要预测未来，用轻量门控减少视频生成。',motivation:'生成未来会增加延迟，也可能干扰精细操作。',method:'门控决定是否生成视频，残差适配器修正动作偏差。',result:'跳过75.5%的视频生成查询，延迟降低38%。',conclusion:'预测未来的价值应结合任务成功率和代价评估。',research_topics:['世界模型','操作与运动','效率与部署'],core_method:'轻量门控跳过不必要的视频生成，残差适配器修正动作。',key_results:[{finding:'75.5%的查询跳过视频生成，延迟降低38%。',setting:'测试基准；摘要未提供硬件配置',evidence_quote:quote}],limitations:['摘要未报告硬件与绝对时延。']}};
+const item={id:'2610.39367',title:'Utility-WAM: 按需生成未来，改善机器人控制',authors:['研究者 A','研究者 B'],published:'2026-10-30',categories:['cs.RO'],summary:quote,AI_status:'success',relevance:0.99,AI:{digest_version:2,tldr:'判断什么时候需要预测未来，用轻量门控减少视频生成。',motivation:'生成未来会增加延迟，也可能干扰精细操作。',method:'门控决定是否生成视频，残差适配器修正动作偏差。',result:'跳过75.5%的视频生成查询，延迟降低38%。',conclusion:'预测未来的价值应结合任务成功率和代价评估。',research_topics:['世界模型','操作与运动','效率与部署'],core_method:'轻量门控跳过不必要的视频生成，残差适配器修正动作。',key_results:[{finding:'75.5%的查询跳过视频生成，延迟降低38%。',setting:'测试基准；摘要未提供硬件配置',evidence_quote:quote}],limitations:['摘要未报告硬件与绝对时延。']}};
 (async()=>{
   const browser=await chromium.launch({headless:true,channel:process.env.BROWSER_CHANNEL||'msedge'});
   try{
@@ -36,7 +36,11 @@ const item={id:'2610.39367',title:'Utility-WAM: 按需生成未来，改善机�
     assert.equal(await page.locator('iframe').count(),0);
     await page.locator('#modalBody').getByText('查看摘要依据',{exact:true}).click();
     assert.equal(await page.locator('.digest-evidence blockquote').innerText(),quote);
+    assert((await page.locator('.digest-bibliography').innerText()).includes('arXiv 提交：2026-10-30'));
+    assert((await page.locator('.digest-bibliography').innerText()).includes('本站收录：2026-11-02'));
     await page.screenshot({path:path.join(output,'details-desktop.png')});
+    await page.locator('.digest-nav').getByRole('button',{name:'原始摘要',exact:true}).click();
+    assert.equal(await page.locator('.digest-abstract').evaluate(el=>el.open && el===document.activeElement),true);
     await page.locator('#modalBody .digest-pdf summary').click();
     await page.waitForSelector('.digest-pdf-frame');assert.equal(pdfRequests,1);
     await page.locator('#closeModal').click();
@@ -45,7 +49,14 @@ const item={id:'2610.39367',title:'Utility-WAM: 按需生成未来，改善机�
     await page.getByRole('button',{name:'阅读解读',exact:true}).click();
     assert((await page.locator('.digest-saved-dialog').innerText()).includes('38%'));
     assert.equal(await page.locator('.digest-saved-dialog iframe').count(),0);
+    const reader=page.locator('.digest-saved-dialog');
+    await reader.getByRole('button',{name:'标记已读',exact:true}).click();
+    assert.equal(await page.evaluate(()=>ReadingList.status('2610.39367')),'read');
+    assert((await reader.getByRole('status').innerText()).includes('已标记为已读'));
+    await reader.getByRole('button',{name:'放回待读',exact:true}).click();
+    assert.equal(await page.evaluate(()=>ReadingList.status('2610.39367')),'pending');
     await page.getByRole('button',{name:'返回清单',exact:true}).click();
+    assert.equal(await page.locator('.rl-dialog').evaluate(el=>el.contains(document.activeElement)),true);
     await page.getByRole('button',{name:'关闭',exact:true}).click();
     await page.setViewportSize({width:390,height:844});
     await page.locator('.paper-card').first().click();

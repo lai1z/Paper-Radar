@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: "30 1 * * *"
   workflow_dispatch:
+    inputs:
+      refresh_digest:
+        description: 'Update digests for today''s existing selection (max 50); preserve source papers and failed updates'
+        type: boolean
+        default: false
 
 
 permissions:
@@ -63,6 +68,7 @@ jobs:
         source .venv/bin/activate
         python -m unittest discover -s daily_arxiv/tests -v
         python -m unittest discover -s ai/tests -v
+        node --test tests/*.test.cjs
         
     - name: Crawl arXiv papers
       id: crawl_step
@@ -103,6 +109,7 @@ jobs:
         echo "本次共抓取 ${paper_count} 篇候选论文，全部交给 Jev 语义闸门 / ${paper_count} candidates handed to the Jev screening stage"
         
         echo "crawl_date=$today" >> $GITHUB_OUTPUT
+        echo "source_count=$paper_count" >> $GITHUB_OUTPUT
         echo "爬取完成 / Crawling completed"
         
     - name: Check for duplicates
@@ -144,8 +151,17 @@ jobs:
                 ;;
         esac
         
+    - name: Check explicit manual digest refresh
+      id: refresh
+      if: github.event_name == 'workflow_dispatch' && inputs.refresh_digest
+      env:
+        LANGUAGE: ${{ vars.LANGUAGE }}
+      run: |
+        python3 ai/refresh_digest.py --inspect \
+          --published-data "$PAPER_HISTORY_DIR/${{ steps.crawl_step.outputs.crawl_date }}_AI_enhanced_${LANGUAGE}.jsonl"
+
     - name: Jev relevance screening
-      if: steps.dedup_check.outputs.has_new_content == 'true'
+      if: steps.dedup_check.outputs.has_new_content == 'true' && steps.refresh.outputs.ready != 'true'
       env:
         JEV_API_KEY: ${{ secrets.JEV_API_KEY || secrets.OPENAI_API_KEY }}
         JEV_BASE_URL: ${{ secrets.JEV_BASE_URL || 'https://openrouter.ai/api/v1' }}
@@ -203,8 +219,14 @@ jobs:
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
         
         # Empty fresh input still resumes pending papers from the checkpoint queue.
-        python enhance.py --data ../data/${today}.jsonl --max_workers 8 --max_papers 50 \
-          --published-data "$PAPER_HISTORY_DIR/${today}_AI_enhanced_${LANGUAGE}.jsonl"
+        if [ "${{ steps.refresh.outputs.ready }}" = "true" ]; then
+          python refresh_digest.py \
+            --published-data "$PAPER_HISTORY_DIR/${today}_AI_enhanced_${LANGUAGE}.jsonl" \
+            --out "../data/${today}_AI_enhanced_${LANGUAGE}.jsonl" --max-workers 8
+        else
+          python enhance.py --data ../data/${today}.jsonl --max_workers 8 --max_papers 50 \
+            --published-data "$PAPER_HISTORY_DIR/${today}_AI_enhanced_${LANGUAGE}.jsonl"
+        fi
         
         # 检查AI处理是否成功 / Check if AI processing was successful
         if [ $? -ne 0 ]; then
@@ -424,6 +446,8 @@ jobs:
         done
 
     - name: Prepare data files for data branch
+      env:
+        LANGUAGE: ${{ vars.LANGUAGE }}
       run: |
         echo "准备数据文件... / Preparing data files..."
         today=${{ steps.crawl_step.outputs.crawl_date }}
@@ -433,6 +457,14 @@ jobs:
         mkdir -p /tmp/data_files/assets
         mkdir -p .ai-checkpoints
         cp -r .ai-checkpoints /tmp/data_files/
+
+        # This record becomes visible only after a successful data branch push.
+        mode=daily
+        if [ "${{ steps.refresh.outputs.ready }}" = "true" ]; then mode=refresh; fi
+        python3 ai/run_report.py --history-dir "$PAPER_HISTORY_DIR" --current-dir data \
+          --out /tmp/data_files/assets/update-status.json --mode "$mode" \
+          --published "${{ steps.publication.outputs.has_publication }}" \
+          --source-count "${{ steps.crawl_step.outputs.source_count }}"
         
         # 复制数据文件到临时目录 / Copy data files to temporary directory
         if [ "${{ steps.publication.outputs.has_publication }}" = "true" ]; then
@@ -482,12 +514,14 @@ jobs:
         mkdir -p data assets
         cp -r /tmp/data_files/data/* data/ 2>/dev/null || true
         cp /tmp/data_files/assets/file-list.txt assets/ 2>/dev/null || true
+        cp /tmp/data_files/assets/update-status.json assets/update-status.json
         cp -r /tmp/data_files/.ai-checkpoints .
         find data -maxdepth 1 -name '*.jsonl' -printf '%f\n' | sort > assets/file-list.txt
         
         # 只添加数据文件 / Only add data files
         git add data/* 2>/dev/null || true
         git add assets/file-list.txt 2>/dev/null || true
+        git add assets/update-status.json
         git add -f .ai-checkpoints/ 2>/dev/null || true
         
         # 检查是否有数据变更需要提交 / Check if there are data changes to commit

@@ -6,7 +6,7 @@ arXiv 每天新增上千篇论文，真正和你相关的那几十篇散在分�
 
 - **全量抓取**：按你配置的分类读取 arXiv 当日新投稿的标题、摘要、作者（只读列表页，不逐篇调用 API）。
 - **语义闸门**：把每篇的标题、摘要、分类交给一个结构化决策模型（默认 TypeSafe Jev），它返回"这篇属于目标领域的概率"。因为是语义判断而不是关键词匹配，换个说法也认得出——关键词筛选最容易漏掉的正是这种改写。
-- **分层产出**：概率最高的一批生成中文要点；次高的一批只收录标题与原始摘要，标注「仅收录」；低于下限的丢弃。这样既控制了模型成本，又不会因为卡分数线而漏掉边缘但有价值的论文。
+- **精选解读**：每天最多发布 50 篇成功的 AI 解读，不再新增只有摘要的长尾记录；不足 50 篇时不凑数。解读基于标题与摘要，不代表阅读全文或独立核验论文结论。
 
 **当前仓库里的参考配置是世界模型 / 具身智能方向**（分类 cs.CV、cs.AI、cs.LG、cs.RO、cs.GR）——它只是这套通用管线的一个实例。
 
@@ -16,23 +16,24 @@ arXiv 每天新增上千篇论文，真正和你相关的那几十篇散在分�
 
 1. **抓哪些分类**：仓库变量 `CATEGORIES`，例如 `cs.CL,cs.LG`。
 2. **什么算你的领域**：`config/research-scope.json` 里的 `true` / `false` 两段英文描述。这是整个系统的"口味"，写得越具体，语义闸门判得越准。
-3. **每天要多少、要多严**：`SCREEN_THRESHOLD`（核心概率下限，默认 0.7）、`SCREEN_MAX_PAPERS`（每天最多总结多少篇，默认 50）、`SCREEN_TAIL_THRESHOLD`（长尾下限，默认 0.3）、`SCREEN_TAIL_MAX`（长尾最多收录多少篇，默认 100）。
+3. **筛选要多严**：`SCREEN_THRESHOLD`（相关度阈值，默认 0.7）。当前每日工作流明确使用 `--max-papers 50 --tail-max 0`；旧的 `SCREEN_MAX_PAPERS` / `SCREEN_TAIL_MAX` 变量不会改变这两个上限。
 
 改完提交，下一次运行就按新口径走。
 
 ## 你会得到什么
 
-- **网页**：按分类分区浏览，可切换日期，右上角关键词框做纯文本筛选（忽略大小写、空格和连字符，输入 `V-JEPA` 也能命中 `VJEPA`）。
+- **阅读工作台**：按日期、研究主题、分类与搜索浏览，切换卡片和速览布局。先看核心方法与关键结果，再按需展开原始摘要与对应依据；页面区分最近成功检查和最新收录日期。
+- **待读与 Zotero**：保存完整解读快照，标记已读；保留 JSON 导出/导入备份。复制 arXiv ID 到 Zotero“通过标识符添加条目”，由 Zotero 获取元数据及 PDF；CSL JSON 是仅含元数据的另一选项。清单保存在当前浏览器，不自动跨设备同步。
 - **数据**：`data` 分支按天保存 `<date>.jsonl`（筛选后的原始元数据）与 `<date>_AI_enhanced_<lang>.jsonl`（带中文要点），可以直接当数据集复用。
-- **成本透明**：每天日志打印两笔真实花费——语义闸门（按输入计费，约 0.05 美元/天）与 AI 总结（约 0.03 美元/天），长尾不调用模型、成本为 0。
+- **费用记录**：实际费用取决于平台、模型和处理量；日志在平台支持时报告消费变化。逐篇检查点避免普通重跑重复处理已成功的论文。
 
 ## 自己部署
 
 1. Fork 本仓库。
 2. `Settings → Secrets and variables → Actions` 添加 Secrets：`OPENAI_API_KEY`、`OPENAI_BASE_URL`（任意 OpenAI 兼容端点）、`TOKEN_GITHUB`（推送数据分支用）、`ACCESS_PASSWORD`（可选）。
-3. 添加 Variables：`CATEGORIES`、`LANGUAGE`、`MODEL_NAME`、`EMAIL`、`NAME`，以及上面提到的四个 `SCREEN_*` 可选项。
+3. 添加 Variables：`CATEGORIES`、`LANGUAGE`、`MODEL_NAME`、`EMAIL`、`NAME`，以及可选的 `SCREEN_THRESHOLD`。
 4. `Settings → Pages` 选择从 `main` 分支发布。
-5. 在 Actions 里手动跑一次 `arXiv-daily-ai-enhanced`，之后每天定时自动执行。
+5. 允许工作流通过 `GITHUB_TOKEN` 写入仓库；将 `js/data-config.js` 的仓库信息设为自己的仓库。在 Actions 里手动跑一次 `Paper Radar`，之后每天定时自动执行。
 
 ## 版权与来源
 
@@ -40,11 +41,10 @@ arXiv 每天新增上千篇论文，真正和你相关的那几十篇散在分�
 
 ## 每日流程与 Jev 语义闸门
 
-每日任务不再用关键词筛选论文，流程是：按分类全量抓取 → 七天去重 → **Jev 语义闸门** → AI 总结 → 生成页面数据。
+每日任务不再用关键词筛选论文，流程是：按分类全量抓取 → 对照成功发布历史跨日去重 → **Jev 语义闸门** → AI 解读 → 合并当日成功结果 → 发布 data 分支。计划时间是 UTC 01:30（北京时间 09:30），GitHub 调度可能延迟。
 
 - 抓取：按 `CATEGORIES` 变量里的分类（默认 `cs.CV,cs.AI,cs.LG,cs.RO,cs.GR`）读取 arXiv 每日列表里的完整元数据，不再逐篇调用 arXiv API，也不在爬虫里丢弃论文。
-- 闸门：`ai/screen.py` 把每篇的标题、摘要和分类交给 TypeSafe Jev（`typesafe/jev-1.13`，OpenRouter 的 System One 决策接口），它返回“属于目标领域”的概率。四个旋钮：`SCREEN_THRESHOLD`（核心概率下限，默认 0.7）、`SCREEN_MAX_PAPERS`（每天最多总结多少篇，默认 50，0 表示不限制）、`SCREEN_TAIL_THRESHOLD`（长尾收录下限，默认 0.3）和 `SCREEN_TAIL_MAX`（长尾每天最多收录多少篇，默认 100，0 表示不收录长尾）。判定失败时保留论文（fail-open）且不占用每日限额，全部论文的分数写到工作流产物里，便于复盘或换阈值重跑。
-- 长尾论文（核心之外、分数仍达到长尾下限的论文，包括被每日上限挤出的高分论文）按分数取前 `SCREEN_TAIL_MAX` 篇，只收录标题与原摘要，不调用总结模型；页面和 Markdown 里会标注“仅收录（相关度中等，未做 AI 总结）”。
+- 闸门：`ai/screen.py` 把标题、摘要和分类交给 TypeSafe Jev，返回领域相关度分数；分数不代表论文质量或结论可靠性。当前最多选择 50 篇，不收录长尾；判定失败时仅在剩余额度内保留候选。全部分数保存在工作流产物里。
 - 总结：`ai/enhance.py` 只处理通过闸门的论文，并开启并发（`--max_workers`）。
 
 领域定义在 [`config/research-scope.json`](config/research-scope.json) 的 `true` / `false` 两段文字里，改这两段就等于改闸门口径；`ai/screen.py`（每日闸门）和 `eval/recall_eval.py`（离线评测）读的是同一份文件，不会各改各的。
@@ -52,3 +52,22 @@ arXiv 每天新增上千篇论文，真正和你相关的那几十篇散在分�
 ## 页面上的关键词筛选
 
 设置页里的关键词只是浏览用的字面筛选：输入 `world model`，页面就只显示标题或摘要里包含这个词的论文。比较时忽略大小写、空格、连字符和下划线，因此 `V-JEPA` 也能命中 `VJEPA`；多个词用逗号分隔、`|` 表示或。这些设置只存在浏览器本地，不影响每日抓取。
+
+## 来源保护与手动更新解读
+
+原始标题、作者、摘要、ID、日期与链接独立于 AI 注释保存。读取缓存时以本次来源元数据为准；缺失发布日期时不把收录日期当成发布日期。新版关键结果需要可在摘要中定位的原句，阿拉伯数字也须在依据中出现。这些检查能发现部分错误，不能证明语义推断或科学结论，重要比较仍应核对原文的条件。
+
+普通重跑会去重、恢复检查点并合并当天结果，失败或空结果不会覆盖成功数据。在 **Actions → Paper Radar → Run workflow** 勾选 `refresh_digest`，可以明确请求更新今天已经收录的最多 50 篇解读，用于查看新格式和提示词的效果。该模式不会新增论文或改动原始元数据；更新失败时保留旧解读，独立刷新检查点支持恢复。当天尚无成功收录时执行普通流程。
+
+界面由 `main` 分支的 Pages 发布，论文与检查状态来自 `data` 分支；仅修改界面不需要重新调用模型。
+
+## 验证
+
+```sh
+uv sync
+uv run python -m unittest discover -s ai/tests -v
+uv run python -m unittest discover -s daily_arxiv/tests -v
+node --test tests/*.test.cjs
+```
+
+浏览器回归使用 Playwright，覆盖搜索和主题筛选、移动端、键盘操作、摘要依据、待读持久化与 Zotero 导出：`tests/paper-digest.browser.cjs`、`tests/research-workspace.browser.cjs`、`tests/zotero-export.browser.cjs`。

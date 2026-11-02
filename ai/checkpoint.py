@@ -3,9 +3,11 @@ import hashlib
 import json
 import os
 import time
+from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
+from provenance import preserve_source
 
 FIELDS = ("tldr", "motivation", "method", "result", "conclusion")
 
@@ -58,13 +60,17 @@ def process_with_checkpoint(items, processor, directory, signature, attempts=3, 
     reused = failed = 0
     jobs = []
     for paper_id, original in work.items():
-        item = dict(original)
+        item = deepcopy(original)
         item.pop("AI", None)
         item.pop("AI_status", None)
         key = checkpoint_key(item)
         cached = state["success"].get(key)
         if cached is not None:
-            output.append(cached)
+            # The digest can be reused while author/date/source metadata stays
+            # identical to the current input, not a stale cached snapshot.
+            refreshed = preserve_source(item, cached)
+            output.append(refreshed)
+            state["success"][key] = refreshed
             state["pending"].pop(paper_id, None)
             reused += 1
             continue
@@ -82,11 +88,14 @@ def process_with_checkpoint(items, processor, directory, signature, attempts=3, 
         paper_id, item, key = job
         for attempt in range(attempts):
             try:
-                result = processor(dict(item))
+                # Protect nested metadata (for example author arrays) from a
+                # processor mutation, including across failed retry attempts.
+                result = processor(deepcopy(item))
                 if result is not None:
                     ai = result.get("AI", {})
                     if not all(isinstance(ai.get(k), str) and ai[k].strip() for k in FIELDS):
                         raise ValueError("Missing or empty AI fields")
+                    result = preserve_source(item, result)
                 break
             except Exception as error:
                 print(f"Paper {paper_id}: attempt {attempt + 1}/{attempts} failed ({type(error).__name__})",

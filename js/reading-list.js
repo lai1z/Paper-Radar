@@ -9,8 +9,10 @@
   };
   const clean = value => {
     const id = normalizeId(value.id || value.url);
+    const originalId = String(value.sourceId || value.id || value.url || '').replace(/^https?:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf|html)\//i, '').replace(/\.pdf$/i, '');
+    const sourceId = /^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?$/i.test(originalId) && normalizeId(originalId).toLowerCase() === id.toLowerCase() ? originalId : id;
     if (typeof value.title !== 'string' || !value.title.trim()) throw new Error('论文标题缺失');
-    return {id, title: value.title.slice(0, 2000), summary: String(value.summary || '').slice(0, 30000),
+    return {id, sourceId, title: value.title.slice(0, 2000), summary: String(value.summary || '').slice(0, 30000),
       authors: (Array.isArray(value.authors) ? value.authors.join(', ') : String(value.authors || '')).slice(0, 5000),
       authorNames: Array.isArray(value.authorNames) ? value.authorNames : Array.isArray(value.authors) ? value.authors : undefined,
       abstract: typeof value.abstract === 'string' ? value.abstract : typeof value.details === 'string' ? value.details : '',
@@ -80,12 +82,12 @@
     try { id = normalizeId(paper.id || paper.url); } catch { return; }
     const saved = papers.find(p => p.id === id);
     if (saved && paper.tldr && (!saved.tldr || (!saved.key_results.length && paper.key_results?.length))) {
-      commit(items => items.map(p => p.id === id ? clean({...p, ...paper, status:p.status, savedAt:p.savedAt}) : p));
+      commit(items => items.map(p => p.id === id ? clean({...p, ...paper, sourceId:paper.sourceId || paper.id || paper.url, status:p.status, savedAt:p.savedAt}) : p));
     }
     const control = button('', event => {
       event.stopPropagation();
       if (papers.some(p => p.id === id)) { open(); return; }
-      if (commit(items => items.some(p => p.id === id) ? items : [clean({...paper, id, status: 'pending', savedAt: Date.now()}), ...items])) {
+      if (commit(items => items.some(p => p.id === id) ? items : [clean({...paper, id, sourceId:paper.sourceId || paper.id || paper.url, status: 'pending', savedAt: Date.now()}), ...items])) {
         notify('已加入待读。可从顶部「待读」继续阅读。');
       }
     });
@@ -106,6 +108,7 @@
     opener.textContent = `待读 (${papers.filter(p => p.status === 'pending').length})`;
     refreshButtons();
     if (dialog.open) render();
+    window.dispatchEvent(new CustomEvent('reading-list-change'));
   }
   function visiblePapers() {
     const query = search.value.trim().toLowerCase();
@@ -114,15 +117,58 @@
   }
   function openSaved(paper) {
     if (!window.PaperDigest) { notify('解读组件未加载，请刷新页面后重试。'); return; }
+    const trigger = document.activeElement;
+    const snapshots = new Map(visiblePapers().map(item => [item.id, item]));
+    if (!snapshots.has(paper.id)) snapshots.set(paper.id, paper);
+    const sequence = [...snapshots.keys()];
+    let position = sequence.indexOf(paper.id);
     const savedDialog = element('dialog', '', 'digest-saved-dialog');
-    savedDialog.setAttribute('aria-label', '已保存的论文解读');
+    savedDialog.setAttribute('aria-labelledby', 'savedDigestTitle');
     const heading = element('div', '', 'rl-heading');
-    heading.append(element('h2', paper.title), button('返回清单', () => savedDialog.close()));
-    const body = element('div'); body.innerHTML = PaperDigest.details(paper);
-    PaperDigest.attach(body, paper);
-    savedDialog.append(heading, body); document.body.append(savedDialog);
+    const title = element('h2'); title.id = 'savedDigestTitle';
+    heading.append(title, button('返回清单', () => savedDialog.close()));
+    const state = element('p', '', 'digest-saved-state'); state.setAttribute('role', 'status');
+    const body = element('div');
+    const actions = element('div', '', 'digest-saved-actions');
+    const positionLabel = element('span', '', 'digest-saved-position');
+    const navigation = element('div', '', 'rl-actions');
+    const previous = button('上一篇', () => { position--; show(); });
+    const next = button('下一篇', () => { position++; show(); });
+    const mark = button('', () => {
+      const current = papers.find(item => item.id === sequence[position]);
+      if (!current) { state.textContent = '这篇论文已从清单移除，当前仍可查看保存时的解读。'; mark.disabled = true; return; }
+      const nextStatus = current.status === 'read' ? 'pending' : 'read';
+      if (commit(items => items.map(item => item.id === current.id ? {...item, status:nextStatus} : item))) {
+        updateState(nextStatus);
+        state.textContent = nextStatus === 'read' ? '已标记为已读。可继续查看，或前往下一篇。' : '已放回待读清单。';
+      } else state.textContent = '状态保存失败，请返回清单导出备份后重试。';
+    });
+    function updateState(status) {
+      mark.textContent = status === 'read' ? '放回待读' : '标记已读';
+      mark.setAttribute('aria-label', mark.textContent);
+      state.textContent = status === 'read' ? '已读 · 可随时放回待读' : '待读 · 阅读后可手动标记已读';
+    }
+    function show() {
+      const saved = papers.find(item => item.id === sequence[position]);
+      const current = saved || snapshots.get(sequence[position]);
+      title.textContent = current.title;
+      updateState(current.status);
+      mark.disabled = !saved;
+      if (!saved) state.textContent = '这篇论文已从清单移除，当前仍可查看保存时的解读。';
+      body.innerHTML = PaperDigest.details(current); PaperDigest.attach(body, current);
+      previous.disabled = position === 0; next.disabled = position === sequence.length - 1;
+      positionLabel.textContent = `${position + 1} / ${sequence.length} · 本次清单`;
+      savedDialog.scrollTop = 0;
+    }
+    navigation.append(previous, next, mark); actions.append(positionLabel, navigation);
+    savedDialog.append(heading, state, body, actions); document.body.append(savedDialog);
     savedDialog.addEventListener('keydown', e => e.stopPropagation());
-    savedDialog.addEventListener('close', () => savedDialog.remove(), {once:true});
+    savedDialog.addEventListener('close', () => {
+      savedDialog.remove();
+      const target = trigger?.isConnected ? trigger : list.querySelector(`[data-saved-open="${sequence[position]}"]`) || search;
+      target?.focus();
+    }, {once:true});
+    show();
     savedDialog.showModal();
   }
   function render() {
@@ -137,7 +183,7 @@
     if (!selected.length) list.append(element('p', query ? '没有匹配的论文，试试标题、作者或 arXiv ID。' : view === 'pending' ? '待读清单是空的。在论文卡片上点「加入待读」，下次就能从这里继续。' : '还没有已读论文。读完后可以手动标记。', 'rl-empty'));
     selected.forEach(paper => {
       const card = element('article', '', 'rl-entry');
-      const title = button(paper.title, () => openSaved(paper)); title.className = 'rl-title';
+      const title = button(paper.title, () => openSaved(paper)); title.className = 'rl-title'; title.dataset.savedOpen = paper.id;
       const meta = element('p', `${paper.authors}\n加入于 ${new Date(paper.savedAt).toLocaleDateString()} · ${paper.id}`, 'rl-meta');
       const details = element('details');
       details.append(element('summary', '查看摘要'), element('p', paper.summary || '暂无摘要'));
@@ -256,9 +302,12 @@
     }));
     metadata.append(metadataActions);
     list = element('div', '', 'rl-list');
+    const zoteroHelp = element('details', '', 'rl-export-help');
+    zoteroHelp.append(element('summary', 'PDF、重复条目与导入说明'),
+      element('p', '文献信息和 PDF 由 Zotero 从 arXiv 获取；下载完成后，展开条目可查看 PDF 附件。Paper Radar 无法确认 Zotero 的下载结果。若没有 PDF：检查 Zotero「设置 → 常规」中的自动附加相关 PDF 选项及 arXiv 网络访问；也可打开论文原文页，用 Zotero Connector 保存。重复添加可能产生重复条目，请在 Zotero「重复条目」中检查。此操作不改变待读状态或 Better Notes 笔记。', 'rl-meta'));
     dialog.append(heading, element('p', '跨日期保存 · 最新加入在前 · 打开论文不会自动标记已读', 'rl-meta'), search, tabs, list,
-      zotero, element('p', '含 PDF 的批量添加：复制 ID → Zotero 工具栏魔棒「通过标识符添加条目」→ 粘贴并按 Enter。文献信息和 PDF 由 Zotero 从 arXiv 获取；下载完成后，展开条目可查看 PDF 附件。Paper Radar 无法确认 Zotero 的下载结果。', 'rl-meta'),
-      element('p', '若没有 PDF：检查 Zotero「设置 → 常规」中的自动附加相关 PDF 选项及 arXiv 网络访问；也可打开论文原文页，用 Zotero Connector 保存。重复添加可能产生重复条目，请在 Zotero「重复条目」中检查。此操作不改变待读状态或 Better Notes 笔记。', 'rl-meta'),
+      element('h3', '批量导入 Zotero', 'rl-export-title'), zotero,
+      element('p', '复制 ID → Zotero 工具栏魔棒「通过标识符添加条目」→ 粘贴并按 Enter，等待 PDF 下载。', 'rl-meta'), zoteroHelp,
       metadata, manualCopy,
       element('p', '保存在当前浏览器，关闭后仍保留；清理网站数据或无痕窗口关闭会丢失。换设备请导出并导入备份。', 'rl-meta'), backups);
     // Keep announcements and undo reachable inside the modal's focus boundary.
@@ -271,6 +320,10 @@
       }
     });
   }
-  window.ReadingList = {mount, open};
+  function status(value) {
+    try { return papers.find(paper => paper.id === normalizeId(value))?.status || ''; }
+    catch { return ''; }
+  }
+  window.ReadingList = {mount, open, status};
   document.addEventListener('DOMContentLoaded', init);
 })();

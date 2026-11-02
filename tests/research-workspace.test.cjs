@@ -1,0 +1,34 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const workspace=require('../js/research-workspace.js');
+
+test('range dedup selects newest snapshot by canonical ID without rewriting source metadata',()=>{
+  const old=Object.freeze({id:'2610.12345v1',date:'2026-10-31',title:'原始标题',abstract:'Original abstract.',published:'2026-10-28',authors:'张三'});
+  const next=Object.freeze({...old,id:'2610.12345v2',date:'2026-11-01',title:'原始修订标题'});
+  assert.deepEqual(workspace.unique([next,old]),[next]);
+  assert.equal(next.id,'2610.12345v2');
+  assert.equal(next.published,'2026-10-28');
+});
+test('search matches case, Chinese, separators, ID and absent fields; OR aliases are literal',()=>{
+  const paper={id:'2610.12345',title:'Jev embodied policy',abstract:'V–JEPA evaluates 机器人 manipulation.',key_results:'invalid'};
+  assert(workspace.matchesQuery(paper,'not-found | JEV'));
+  assert(workspace.matchesQuery(paper,'v-jepa'));
+  assert(workspace.matchesQuery(paper,'机器人'));
+  assert(workspace.matchesQuery(paper,'2610.12345'));
+  assert(!workspace.matchesQuery(paper,'[.*]'));
+  assert(!workspace.matchesQuery(paper,'navigation'));
+});
+test('topic counts remain overlapping labels, unknown labels stay unclassified',()=>{
+  const rows=[{id:'1',research_topics:['世界模型','世界模型','评测']},{id:'2',research_topics:['untrusted']},{id:'3'}];
+  assert.deepEqual(workspace.topicCounts(rows),{topics:[['世界模型',1],['评测',1]],untagged:2});
+  assert.equal(workspace.select(rows,{topic:'untagged'}).length,2);
+});
+test('filtering is explicit and sort uses source publication date, not collection date',()=>{
+  const rows=[{id:'1',date:'2026-11-02',published:'2026-10-20',isMatched:true,relevance:.8,title:'robot',research_topics:['机器人策略']},{id:'2',date:'2026-11-01',published:'2026-10-25',isMatched:false,relevance:.9,title:'world model',research_topics:['世界模型']}];
+  assert.deepEqual(workspace.select(rows).map(p=>p.id),['1','2']);
+  assert.deepEqual(workspace.select(rows,{sort:'published'}).map(p=>p.id),['2','1']);
+  assert.equal(workspace.select(rows,{query:'robot'}).length,1);
+  assert.equal(workspace.select(rows,{onlyMatched:true}).length,1);
+  assert.equal(workspace.select(rows,{topic:'世界模型',query:'robot'}).length,0);
+  assert.equal(rows.length,2);
+});

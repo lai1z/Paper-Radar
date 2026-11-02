@@ -8,6 +8,8 @@ from pathlib import Path
 from checkpoint import process_with_checkpoint
 from digest import grounded_digest, migrate_pending, defer_items
 from paper_history import canonical_id, fingerprint, is_successful, read_records
+from copy import deepcopy
+from provenance import assert_source_preserved
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 from queue import Queue
@@ -43,6 +45,9 @@ def parse_args():
     return parser.parse_args()
 
 def process_single_item(chain, item: Dict, language: str) -> Dict:
+    # Generated fields annotate a copy; the caller's source record is immutable.
+    source = deepcopy(item)
+    item = deepcopy(item)
     def check_github_code(content: str) -> Dict:
         """提取并验证 GitHub 链接"""
         code_info = {}
@@ -54,7 +59,9 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
         if match:
             owner, repo = match.groups()
             # 清理 repo 名称，去掉可能的 .git 后缀或末尾的标点
-            repo = repo.rstrip(".git").rstrip(".,)")
+            repo = repo.rstrip(".,)")
+            if repo.endswith(".git"):
+                repo = repo[:-4]
             
             full_url = f"https://github.com/{owner}/{repo}"
             code_info["code_url"] = full_url
@@ -129,6 +136,7 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
                                  if key not in ("source", "digest_version")}, ensure_ascii=False)
     if is_sensitive(generated_text):
         return None
+    assert_source_preserved(source, item)
     return item
 
 def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int, max_papers: int = 50,

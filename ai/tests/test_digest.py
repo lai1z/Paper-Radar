@@ -7,12 +7,42 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from checkpoint import atomic_write, checkpoint_key, process_with_checkpoint, FIELDS
-from digest import grounded_digest, migrate_pending, defer_items
+from digest import grounded_digest, migrate_pending, defer_items, numeric_values, supported_result
 from structure import Structure
 from paper_history import fingerprint
 
 
 class DigestTests(unittest.TestCase):
+    def test_numeric_claims_must_exist_in_their_evidence(self):
+        abstract = 'Our robot is evaluated in 20 tasks. Success improves by 38% over the baseline.'
+        quote = 'Success improves by 38% over the baseline.'
+        result = {'finding': '成功率提升 38%', 'setting': '20 项任务', 'evidence_quote': quote}
+        self.assertTrue(supported_result(result, abstract))
+        self.assertFalse(supported_result({**result, 'finding': '成功率提升 83%'}, abstract))
+        self.assertFalse(supported_result({**result, 'finding': '成功率变化 −38%'}, abstract))
+        self.assertFalse(supported_result({**result, 'setting': '200 项任务'}, abstract))
+        # A true number elsewhere in the abstract is insufficient for a result
+        # whose selected evidence excerpt does not contain that number.
+        self.assertFalse(supported_result({**result, 'finding': '成功率提升 20%'}, abstract))
+        self.assertFalse(supported_result({**result, 'finding': ''}, abstract))
+        self.assertFalse(supported_result({'finding': 'ok', 'evidence_quote': None}, abstract))
+        self.assertFalse(supported_result(None, abstract))
+
+    def test_numbers_do_not_misread_model_names_and_normalize_formatting(self):
+        self.assertEqual(numeric_values('GPT-4o / V-JEPA2 / GPT-4 / 3D'), set())
+        self.assertEqual(numeric_values('1,000 tasks; 38.0%; 50ms; 2x'), numeric_values('1000任务、38%、50 ms、2 倍'))
+        quote = 'Our method evaluates 1,000 tasks with 38.0% success.'
+        self.assertTrue(supported_result({'finding': '1000项任务成功率38%', 'setting': '', 'evidence_quote': quote}, quote))
+
+    def test_refresh_pending_never_migrates_into_new_daily_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            refresh = {'success': {}, 'pending': {'2611.12345': {'id': '2611.12345'}}}
+            atomic_write(directory / 'refresh-2026-11-02-old.json', refresh)
+            migrate_pending(directory, 'new-daily-signature')
+            self.assertFalse((directory / 'new-daily-signature.json').exists())
+            self.assertEqual(json.loads((directory / 'refresh-2026-11-02-old.json').read_text()), refresh)
+
     def test_legacy_shape_and_bounded_new_fields(self):
         legacy = Structure(**{key: '旧摘要' for key in FIELDS})
         self.assertEqual(legacy.key_results, [])

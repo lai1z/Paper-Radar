@@ -18,7 +18,7 @@ const DATA_CONFIG = {
      * GitHub repository name
      * This will be replaced during GitHub Actions workflow execution
      */
-    repoName: 'daily-arXiv-ai-enhanced',
+    repoName: 'Paper-Radar',
 
     /**
      * Data branch name

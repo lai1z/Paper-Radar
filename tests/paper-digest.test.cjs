@@ -6,6 +6,27 @@ test('supported result exposes exact source; unmatched evidence is excluded',()=
   assert(digest.details(paper).includes('Latency decreased by 38%'));
   assert.equal(digest.results({...paper,key_results:[{finding:'提升 999%',evidence_quote:'Invented quote'}]}).length,0);
 });
+test('numeric claims require source values without confusing model names with measurements',()=>{
+  assert.equal(digest.results({...paper,key_results:[{finding:'延迟降低 99%',setting:'benchmark A',evidence_quote:paper.abstract}]}).length,0);
+  assert.equal(digest.results({...paper,key_results:[{finding:'延迟变化 -38%',setting:'benchmark A',evidence_quote:paper.abstract}]}).length,0);
+  assert.equal(digest.results({...paper,key_results:[{finding:'延迟降低38%',setting:'在8块 GPU上',evidence_quote:paper.abstract}]}).length,0);
+  const abstract='V-JEPA2 and GPT-4o are tested on 1,000 trials and run in 20ms.';
+  assert.equal(digest.results({...paper,abstract,key_results:[{finding:'V-JEPA2、GPT-4o 在1000.0次试验中用时20ms',setting:'1000次试验',evidence_quote:abstract}]}).length,1);
+  assert.equal(digest.results({...paper,abstract,key_results:[{finding:'GPT-4o 在1000次试验中用时2e1ms',setting:'',evidence_quote:abstract}]}).length,1);
+});
+test('bibliographic source keeps submission and collection dates separate and never invents missing dates',()=>{
+  const original={...paper,id:'2610.39367v2',authorNames:['王小明','Smith, Jr., John'],published:'2026-10-01T12:34:56Z',date:'2026-11-02'};
+  const before=JSON.stringify(original),html=digest.details(original);
+  assert(html.includes('arXiv 提交：2026-10-01'));
+  assert(html.includes('本站收录：2026-11-02'));
+  assert(html.includes('https://arxiv.org/abs/2610.39367v2'));
+  assert.equal(digest.arxivId({id:'2610.39367',sourceId:'2610.39367v2'}),'2610.39367v2');
+  assert(html.includes('王小明, Smith, Jr., John'));
+  assert.equal(JSON.stringify(original),before);
+  const missing=digest.details({...original,published:''});
+  assert(missing.includes('提交日期未收录'));
+  assert(!missing.includes('arXiv 提交：2026-11-02'));
+});
 test('legacy summaries remain useful and failed placeholders never look successful',()=>{
   assert(digest.card({...paper,key_results:[]}).includes('延迟降低 38%'));
   const failed={...paper,AI_status:'failed',tldr:'AI summary unavailable; retry pending.'};
