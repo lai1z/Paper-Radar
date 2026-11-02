@@ -9,6 +9,28 @@ def success(item):
     return {**item, "AI": {k: "valid" for k in FIELDS}}
 
 class RecoveryTests(unittest.TestCase):
+    def test_daily_cap_includes_retries_and_persists_overflow(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            def broken(item):
+                raise ValueError('temporary failure')
+            process_with_checkpoint([{'id': 'retry'}], broken, directory, 'cap', attempts=1)
+            calls = []
+            def recovered(item):
+                calls.append(item['id'])
+                return success(item)
+            rows = [{'id': f'new-{i}'} for i in range(50)]
+            output = process_with_checkpoint(rows, recovered, directory, 'cap', max_items=50)
+            self.assertEqual(len(output), 50)
+            self.assertEqual(len(calls), 50)
+            self.assertIn('retry', calls)
+            pending = json.loads((Path(directory) / 'cap.json').read_text())['pending']
+            self.assertEqual(list(pending), ['new-49'])
+            # No new candidates: deferred papers still resume, without rerunning successes.
+            output = process_with_checkpoint([], recovered, directory, 'cap', max_items=50)
+            self.assertEqual([row['id'] for row in output], ['new-49'])
+            self.assertEqual(len(calls), 51)
+
     def test_partial_failure_retry_and_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             calls = []
@@ -66,4 +88,3 @@ class RecoveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
