@@ -21,7 +21,9 @@ def atomic_write(path, value):
     os.replace(temporary, path)
 
 
-def process_with_checkpoint(items, processor, directory, signature, attempts=3, sleep=time.sleep, workers=1):
+def process_with_checkpoint(items, processor, directory, signature, attempts=3, sleep=time.sleep, workers=1, max_items=0):
+    if max_items < 0:
+        raise ValueError("max_items must be nonnegative")
     path = Path(directory) / (signature + ".json")
     state = {"success": {}, "pending": {}}
     if path.exists():
@@ -29,6 +31,12 @@ def process_with_checkpoint(items, processor, directory, signature, attempts=3, 
     # Retry unfinished papers even when they have left the daily arXiv list.
     work = dict(state["pending"])
     work.update({item["id"]: item for item in items})
+    # Pending retries share the publication/processing budget with new papers.
+    # Persist overflow so it can resume even after leaving the daily feed.
+    if max_items and len(work) > max_items:
+        state["pending"].update(work)
+        print(f"AI budget: {len(work) - max_items} papers deferred", flush=True)
+        work = dict(list(work.items())[:max_items])
 
     output = []
     reused = failed = 0
