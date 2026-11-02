@@ -4,7 +4,7 @@
 设计要点：
 - 逐篇把标题和摘要交给 TypeSafe Jev（OpenRouter 的 System One / Decisions 接口），
   它返回一个“属于该领域”的概率，而不是生成文本，因此输出几乎不产生费用。
-- 判定失败时 fail-open：保留论文，避免接口抖动导致整天内容丢失。
+- 判定失败时 fail-open：在剩余每日额度内保留论文。
 - 把全部论文的分数写到外部文件（默认 /tmp），方便事后调整阈值或复盘，不污染 data 分支。
 """
 
@@ -43,7 +43,7 @@ DEFAULT_THRESHOLD = 0.7
 DEFAULT_MAX_PAPERS = 50
 # 长尾：低于核心阈值但仍有参考价值的论文，只收录不总结（不花总结模型的钱）
 DEFAULT_TAIL_THRESHOLD = 0.3
-DEFAULT_TAIL_MAX = 100
+DEFAULT_TAIL_MAX = 0
 
 
 def load_scope() -> tuple[str, str, str]:
@@ -133,8 +133,7 @@ def main() -> int:
     base_url = os.environ.get("JEV_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or "https://openrouter.ai/api/v1"
     api_key = os.environ.get("JEV_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
     if not api_key:
-        print("缺少 JEV_API_KEY / OPENAI_API_KEY，跳过闸门并保留全部论文", file=sys.stderr)
-        return 0
+        raise RuntimeError("缺少 JEV_API_KEY / OPENAI_API_KEY，停止筛选，避免未经筛选的论文突破预算")
 
     data_path = Path(args.data)
     domain_true, domain_false, scope_source = load_scope()
@@ -181,7 +180,10 @@ def main() -> int:
     else:
         kept_scored = eligible
         over_limit = set()
-    kept = [item for _, item in kept_scored] + fail_open_items
+    # Unscored fallback papers share the same budget; they never expand it.
+    remaining = max(0, max_papers - len(kept_scored)) if max_papers > 0 else len(fail_open_items)
+    over_limit.update(item["id"] for item in fail_open_items[remaining:])
+    kept = [item for _, item in kept_scored] + fail_open_items[:remaining]
     kept_ids = {item["id"] for item in kept}
     cutoff = kept_scored[-1][0] if kept_scored else None
 
@@ -216,7 +218,7 @@ def main() -> int:
     for item, (score, _) in zip(papers, results):
         record = dict(item)
         record["jev_score"] = score
-        if score is None:
+        if score is None and item["id"] in kept_ids:
             record["screen"] = "fail_open"
         elif item["id"] in kept_ids:
             record["screen"] = "kept"
@@ -237,7 +239,7 @@ def main() -> int:
         print(f"全部分数写入 {scores_path}", file=sys.stderr)
 
     temporary = data_path.with_suffix(data_path.suffix + ".tmp")
-    temporary.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in kept) + "\n", encoding="utf-8")
+    temporary.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in kept), encoding="utf-8")
     os.replace(temporary, data_path)
 
     print(
@@ -245,13 +247,12 @@ def main() -> int:
         + (f"（最低分 {cutoff:.3f}）" if cutoff is not None else "")
         + f"；长尾仅收录 {len(tail_scored)} 篇"
         + (f"（最低分 {tail_cutoff:.3f}）" if tail_cutoff is not None else "")
-        + f"；过滤 {len(rejected)} 篇，判定失败 {failed} 篇（已按保留处理）；"
+        + f"；过滤 {len(rejected)} 篇，判定失败 {failed} 篇（仅在剩余额度内保留）；"
         f"输入 {tokens} tokens，费用 ${cost:.4f}",
         file=sys.stderr,
     )
     if not kept:
-        print("闸门后没有剩余论文，为避免清空当日数据，改为保留全部候选", file=sys.stderr)
-        data_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in papers) + "\n", encoding="utf-8")
+        print("没有符合阈值的论文，不用无关候选凑满额度", file=sys.stderr)
     return 0
 
 
