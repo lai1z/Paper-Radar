@@ -9,6 +9,7 @@
     <link rel="shortcut icon" type="image/png" href="assets/logo2-removebg-preview.png">
     <link rel="stylesheet" href="css/styles.css">
     <link rel="stylesheet" href="css/reading-list.css?v=1">
+    <link rel="stylesheet" href="css/paper-digest.css?v=1">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
@@ -156,9 +157,8 @@
 
         <!-- 项目介绍 / Project intro -->
         <section class="project-intro" style="max-width: 1100px; margin: 18px auto 0; padding: 16px 20px; border-radius: 12px; background: rgba(127,127,127,0.08); line-height: 1.7; font-size: 14px;">
-            <p style="margin: 0 0 8px;"><strong>Paper Radar · 每天自动把 arXiv 的上千篇新投稿，筛成一份只属于你方向的短名单</strong>：语义模型判断相关性，大模型写中文要点。</p>
-            <p style="margin: 0 0 8px;">带中文要点的是完整总结；标着「仅收录」的只有原始标题与摘要——留给想再挖一层的人。右上角关键词框可以只看你关心的方向（忽略大小写、空格和连字符，<code>V-JEPA</code> 也能命中 <code>VJEPA</code>）。</p>
-            <p style="margin: 0;">当前参考配置是<strong>世界模型 / 具身智能</strong>方向，但分类、领域定义（<code>config/research-scope.json</code>）和每天的数量都可以换成你自己的。基于 <a href="https://github.com/dw-dengwei/daily-arXiv-ai-enhanced" target="_blank" rel="noopener">dw-dengwei/daily-arXiv-ai-enhanced</a> 修改，遵循上游许可。</p>
+            <p style="margin: 0 0 8px;"><strong>具身智能 · 世界模型，每日最多 50 篇解读。</strong> 先看核心方法与关键结果，再按需展开评测条件、摘要依据和待核实信息。</p>
+            <p style="margin: 0;">解读依据作者摘要，未作全文核验。感兴趣的论文可加入「待读」，以后在清单中继续阅读完整解读；新收录不再添加仅有摘要的长尾论文。</p>
         </section>
 
         <main>
@@ -251,7 +251,8 @@
     </button>
 
     <script src="js/zotero-export.js?v=pdf-lookup-1"></script>
-    <script src="js/reading-list.js?v=pdf-lookup-1"></script>
-    <script src="js/app.js?v=zotero-1"></script>
+    <script src="js/paper-digest.js?v=1"></script>
+    <script src="js/reading-list.js?v=digest-1"></script>
+    <script src="js/app.js?v=digest-1"></script>
 </body>
-</html>
+</html> 

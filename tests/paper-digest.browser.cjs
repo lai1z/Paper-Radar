@@ -1,0 +1,62 @@
+const {chromium}=require('playwright');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const root=path.resolve(__dirname,'..');
+const quote='The gate bypasses video generation on 75.5% of queries and reduces latency by 38%.';
+const item={id:'2610.39367',title:'Utility-WAM: 按需生成未来，改善机器人控制',authors:['研究者 A','研究者 B'],categories:['cs.RO'],summary:quote,AI_status:'success',relevance:0.99,AI:{tldr:'判断什么时候需要预测未来，用轻量门控减少视频生成。',motivation:'生成未来会增加延迟，也可能干扰精细操作。',method:'门控决定是否生成视频，残差适配器修正动作偏差。',result:'跳过75.5%的视频生成查询，延迟降低38%。',conclusion:'预测未来的价值应结合任务成功率和代价评估。',research_topics:['世界模型','操作与运动','效率与部署'],core_method:'轻量门控跳过不必要的视频生成，残差适配器修正动作。',key_results:[{finding:'75.5%的查询跳过视频生成，延迟降低38%。',setting:'测试基准；摘要未提供硬件配置',evidence_quote:quote}],limitations:['摘要未报告硬件与绝对时延。']}};
+(async()=>{
+  const browser=await chromium.launch({headless:true,channel:process.env.BROWSER_CHANNEL||'msedge'});
+  try{
+    const context=await browser.newContext({viewport:{width:1365,height:950}});
+    let pdfRequests=0;
+    await context.route('**/*',route=>{
+      const u=new URL(route.request().url());
+      const fulfill=(body,type='text/plain')=>route.fulfill({body,contentType:type});
+      if(u.hostname==='arxiv.org'){pdfRequests++;return fulfill('PDF test fixture');}
+      if(u.pathname.endsWith('file-list.txt'))return fulfill('2026-11-02_AI_enhanced_Chinese.jsonl');
+      if(u.pathname.endsWith('.jsonl'))return fulfill(JSON.stringify(item)+'\n'+JSON.stringify({...item,id:'2610.99999',title:'<img src=x onerror=alert(1)> 无法总结',AI_status:'failed'})+'\n');
+      if(u.hostname==='api.github.com')return fulfill('{"stargazers_count":0,"forks_count":0}','application/json');
+      if(u.pathname.endsWith('/auth.js'))return fulfill('window.Auth={requireAuth(){},isPasswordEnabled(){return false},logout(){}};','application/javascript');
+      if(u.hostname!=='radar.test')return fulfill(u.pathname.endsWith('flatpickr')?'window.flatpickr=()=>({setDate(){},destroy(){},set(){}});':'',u.pathname.endsWith('flatpickr')?'application/javascript':'text/css');
+      const file=path.join(root,u.pathname==='/'?'index.html':u.pathname.slice(1));
+      const ext=path.extname(file),types={'.html':'text/html','.js':'application/javascript','.css':'text/css','.png':'image/png'};
+      return fulfill(fs.readFileSync(file),types[ext]||'text/plain');
+    });
+    const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+    await page.goto('https://radar.test/');
+    await page.waitForSelector('.digest-card-result');
+    assert.equal(await page.locator('.paper-card').count(),2);
+    assert.equal(await page.locator('.paper-card img').count(),0);
+    assert((await page.locator('.paper-card').first().innerText()).includes('38%'));
+    assert.equal(pdfRequests,0);
+    const output=path.resolve(root,'../../digest-preview');fs.mkdirSync(output,{recursive:true});
+    await page.screenshot({path:path.join(output,'cards-desktop.png')});
+    await page.locator('.paper-card').first().getByRole('button',{name:'+ 加入待读',exact:true}).click();
+    await page.locator('.paper-card').first().click();
+    assert(await page.locator('#paperModal.active').count());
+    assert.equal(await page.locator('iframe').count(),0);
+    await page.locator('#modalBody').getByText('查看摘要依据',{exact:true}).click();
+    assert.equal(await page.locator('.digest-evidence blockquote').innerText(),quote);
+    await page.screenshot({path:path.join(output,'details-desktop.png')});
+    await page.locator('#modalBody .digest-pdf summary').click();
+    await page.waitForSelector('.digest-pdf-frame');assert.equal(pdfRequests,1);
+    await page.locator('#closeModal').click();
+    await page.reload();await page.waitForSelector('.paper-card');
+    await page.locator('#readingListButton').click();
+    await page.getByRole('button',{name:'阅读解读',exact:true}).click();
+    assert((await page.locator('.digest-saved-dialog').innerText()).includes('38%'));
+    assert.equal(await page.locator('.digest-saved-dialog iframe').count(),0);
+    await page.getByRole('button',{name:'返回清单',exact:true}).click();
+    await page.getByRole('button',{name:'关闭',exact:true}).click();
+    await page.setViewportSize({width:390,height:844});
+    await page.locator('.paper-card').first().click();
+    assert.equal(await page.locator('.digest-details').evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
+    await page.locator('.paper-modal-content').evaluate(el=>Promise.all(el.getAnimations().map(animation=>animation.finished)));
+    await page.screenshot({path:path.join(output,'details-mobile.png')});
+    await page.locator('#closeModal').click();
+    await page.locator('.paper-card').nth(1).click();
+    assert((await page.locator('#modalBody').innerText()).includes('待重试'));
+    assert.equal(await page.locator('#modalBody .digest-key-results').count(),0);
+    assert.deepEqual(errors,[]);
+    console.log('PASS: real page, safe card rendering, evidence, lazy PDF, persisted reading view, mobile layout, failure state');
+  }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

@@ -10,6 +10,12 @@ from threading import Lock
 FIELDS = ("tldr", "motivation", "method", "result", "conclusion")
 
 
+def checkpoint_key(item):
+    return hashlib.sha256(json.dumps(
+        [item["id"], item.get("title", ""), item.get("summary", "")], ensure_ascii=False
+    ).encode("utf-8")).hexdigest()
+
+
 def atomic_write(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -21,7 +27,8 @@ def atomic_write(path, value):
     os.replace(temporary, path)
 
 
-def process_with_checkpoint(items, processor, directory, signature, attempts=3, sleep=time.sleep, workers=1, max_items=0):
+def process_with_checkpoint(items, processor, directory, signature, attempts=3, sleep=time.sleep, workers=1, max_items=0,
+                            exclude_ids=(), priority_ids=(), defer_ids=()):
     if max_items < 0:
         raise ValueError("max_items must be nonnegative")
     path = Path(directory) / (signature + ".json")
@@ -31,6 +38,15 @@ def process_with_checkpoint(items, processor, directory, signature, attempts=3, 
     # Retry unfinished papers even when they have left the daily arXiv list.
     work = dict(state["pending"])
     work.update({item["id"]: item for item in items})
+    if exclude_ids or priority_ids:
+        from paper_history import canonical_id
+        # Same-day updated versions cannot consume another publication slot, but
+        # must survive after leaving today's source list.
+        state["pending"].update({key: item for key, item in work.items() if canonical_id(item) in defer_ids})
+        state["pending"] = {key: item for key, item in state["pending"].items()
+                            if canonical_id(item) not in exclude_ids or canonical_id(item) in defer_ids}
+        work = {key: item for key, item in work.items() if canonical_id(item) not in exclude_ids}
+        work = dict(sorted(work.items(), key=lambda pair: canonical_id(pair[1]) not in priority_ids))
     # Pending retries share the publication/processing budget with new papers.
     # Persist overflow so it can resume even after leaving the daily feed.
     if max_items and len(work) > max_items:
@@ -45,9 +61,7 @@ def process_with_checkpoint(items, processor, directory, signature, attempts=3, 
         item = dict(original)
         item.pop("AI", None)
         item.pop("AI_status", None)
-        key = hashlib.sha256(json.dumps(
-            [paper_id, item.get("summary", "")], ensure_ascii=False
-        ).encode("utf-8")).hexdigest()
+        key = checkpoint_key(item)
         cached = state["success"].get(key)
         if cached is not None:
             output.append(cached)

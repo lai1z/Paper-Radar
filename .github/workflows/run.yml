@@ -23,12 +23,20 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Restore durable AI checkpoints
+    - name: Restore publication history and durable AI checkpoints
       run: |
-        if git ls-remote --exit-code --heads origin data > /dev/null 2>&1; then
+        PAPER_HISTORY_DIR="$RUNNER_TEMP/paper-history/data"
+        echo "PAPER_HISTORY_DIR=$PAPER_HISTORY_DIR" >> "$GITHUB_ENV"
+        mkdir -p "$PAPER_HISTORY_DIR"
+        # A network failure must stop the job, not silently create an empty history.
+        remote_data=$(git ls-remote --heads origin data)
+        if [ -n "$remote_data" ]; then
           git fetch origin data
+          if git cat-file -e FETCH_HEAD:data 2>/dev/null; then
+            git archive FETCH_HEAD data | tar -x -C "$(dirname "$PAPER_HISTORY_DIR")"
+          fi
           if git cat-file -e FETCH_HEAD:.ai-checkpoints 2>/dev/null; then
-            git archive FETCH_HEAD .ai-checkpoints | tar -x
+            git archive FETCH_HEAD .ai-checkpoints | tar -x -C "$(dirname "$PAPER_HISTORY_DIR")"
           fi
         fi
 
@@ -40,21 +48,28 @@ jobs:
         restore-keys: |
           ai-checkpoints-v1-
 
+    - name: Merge durable and cached AI progress
+      run: |
+        python3 ai/restore_checkpoints.py \
+          --durable-dir "$(dirname "$PAPER_HISTORY_DIR")/.ai-checkpoints" --cache-dir .ai-checkpoints
+
     - name: Install dependencies
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | sh
         uv sync
 
-    - name: Validate interest filter
+    - name: Validate filters, publication history, and AI recovery
       run: |
         source .venv/bin/activate
         python -m unittest discover -s daily_arxiv/tests -v
+        python -m unittest discover -s ai/tests -v
         
     - name: Crawl arXiv papers
       id: crawl_step
       run: |
         source .venv/bin/activate
         today=$(date -u "+%Y-%m-%d")
+        mkdir -p data
         echo "开始爬取 $today 的arXiv论文... / Starting to crawl $today arXiv papers..."
         
         # 检查今日文件是否已存在，如存在则删除 / Check if today's file exists, delete if found
@@ -99,7 +114,7 @@ jobs:
         cd daily_arxiv
         # 执行去重检查脚本 / Execute intelligent deduplication check script
         set +e  # 暂时允许命令失败 / Temporarily allow command failure
-        python daily_arxiv/check_stats.py
+        python daily_arxiv/check_stats.py --date "${{ steps.crawl_step.outputs.crawl_date }}" --history-dir "$PAPER_HISTORY_DIR"
         
         # 获取退出码 / Get exit code
         dedup_exit_code=$?
@@ -155,7 +170,6 @@ jobs:
         echo "闸门后共 ${total} 篇：$((total - raw)) 篇进入 AI 总结，${raw} 篇长尾仅收录（不调用 AI）"
 
     - name: AI Enhancement Processing
-      if: steps.dedup_check.outputs.has_new_content == 'true'
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
@@ -188,7 +202,9 @@ jobs:
         export LANGUAGE="${{ vars.LANGUAGE }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
         
-        python enhance.py --data ../data/${today}.jsonl --max_workers 8 --max_papers 50
+        # Empty fresh input still resumes pending papers from the checkpoint queue.
+        python enhance.py --data ../data/${today}.jsonl --max_workers 8 --max_papers 50 \
+          --published-data "$PAPER_HISTORY_DIR/${today}_AI_enhanced_${LANGUAGE}.jsonl"
         
         # 检查AI处理是否成功 / Check if AI processing was successful
         if [ $? -ne 0 ]; then
@@ -196,6 +212,16 @@ jobs:
             exit 1
         fi
         echo "AI增强处理完成 / AI enhancement processing completed"
+
+    - name: Merge successful daily publication
+      id: publication
+      env:
+        LANGUAGE: ${{ vars.LANGUAGE }}
+      run: |
+        source .venv/bin/activate
+        today=${{ steps.crawl_step.outputs.crawl_date }}
+        python ai/publish_daily.py --data "data/${today}_AI_enhanced_${LANGUAGE}.jsonl" \
+          --history-dir "$PAPER_HISTORY_DIR" --limit 50
 
     - name: Report AI summarization cost
       if: always()
@@ -251,7 +277,7 @@ jobs:
         retention-days: 7
 
     - name: Convert to Markdown
-      if: steps.dedup_check.outputs.has_new_content == 'true'
+      if: steps.publication.outputs.has_publication == 'true'
       run: |
         source .venv/bin/activate
         today=${{ steps.crawl_step.outputs.crawl_date }}
@@ -282,14 +308,14 @@ jobs:
         echo "Markdown转换完成 / Markdown conversion completed"
         
     - name: Update file list
-      if: steps.dedup_check.outputs.has_new_content == 'true'
+      if: steps.publication.outputs.has_publication == 'true'
       run: |
         echo "更新文件列表... / Updating file list..."
         ls data/*.jsonl | sed 's|data/||' > assets/file-list.txt
         echo "文件列表更新完成 / File list updated"
 
     - name: Generate password hash and inject into config
-      if: steps.dedup_check.outputs.has_new_content == 'true'
+      if: steps.publication.outputs.has_publication == 'true'
       run: |
         echo "🔐 Generating password hash for authentication..."
 
@@ -324,27 +350,14 @@ jobs:
 
     - name: Summary
       run: |
-        if [ "${{ steps.dedup_check.outputs.has_new_content }}" = "true" ]; then
-          echo "✅ 工作流完成：去重发现新内容并成功处理 / Workflow completed: Smart deduplication found new content and processed successfully"
+        if [ "${{ steps.publication.outputs.has_publication }}" = "true" ]; then
+          echo "✅ 已准备新的成功解读；合并当天历史结果后发布，最多 50 篇"
         else
-          case "${{ steps.dedup_check.outputs.skip_reason }}" in
-            "no_new_content")
-              echo "ℹ️ 工作流完成：去重后无新内容 / Workflow completed: No new content after smart deduplication"
-              ;;
-            "processing_error")
-              echo "⚠️ 工作流完成：去重处理出错 / Workflow completed: Deduplication processing error"
-              ;;
-            "unknown_error")
-              echo "⚠️ 工作流完成：未知错误 / Workflow completed: Unknown error"
-              ;;
-            *)
-              echo "ℹ️ 工作流完成：未知原因跳过处理 / Workflow completed: Skipped for unknown reason"
-              ;;
-          esac
+          echo "ℹ️ 本次没有新增成功解读；不生成空日期、不覆盖已有数据，待重试任务继续保存"
         fi
         
     - name: Inject repository info into data-config.js
-      if: steps.dedup_check.outputs.has_new_content == 'true'
+      if: steps.publication.outputs.has_publication == 'true'
       run: |
         echo "注入仓库信息到 data-config.js... / Injecting repository info into data-config.js..."
         
@@ -366,7 +379,7 @@ jobs:
         fi
 
     - name: Commit code changes to main branch
-      if: steps.dedup_check.outputs.has_new_content == 'true'
+      if: steps.publication.outputs.has_publication == 'true'
       run: |
         git config --global user.email "${{ vars.EMAIL }}"
         git config --global user.name "${{ vars.NAME }}"
@@ -388,7 +401,7 @@ jobs:
         fi
 
     - name: Push code changes to main branch
-      if: steps.dedup_check.outputs.has_new_content == 'true'
+      if: steps.publication.outputs.has_publication == 'true'
       run: |
         # 设置Git配置以处理自动合并 / Set Git config for automatic merging
         git config pull.rebase true
@@ -411,7 +424,6 @@ jobs:
         done
 
     - name: Prepare data files for data branch
-      if: steps.dedup_check.outputs.has_new_content == 'true'
       run: |
         echo "准备数据文件... / Preparing data files..."
         today=${{ steps.crawl_step.outputs.crawl_date }}
@@ -419,16 +431,17 @@ jobs:
         # 创建临时目录保存数据文件 / Create temporary directory to save data files
         mkdir -p /tmp/data_files/data
         mkdir -p /tmp/data_files/assets
+        mkdir -p .ai-checkpoints
         cp -r .ai-checkpoints /tmp/data_files/
         
         # 复制数据文件到临时目录 / Copy data files to temporary directory
-        cp -r data/* /tmp/data_files/data/ 2>/dev/null || true
-        cp assets/file-list.txt /tmp/data_files/assets/ 2>/dev/null || true
+        if [ "${{ steps.publication.outputs.has_publication }}" = "true" ]; then
+          cp -r data/* /tmp/data_files/data/
+        fi
         
         echo "数据文件已保存到临时目录 / Data files saved to temporary directory"
 
     - name: Setup and commit to data branch
-      if: steps.dedup_check.outputs.has_new_content == 'true'
       run: |
         git config --global user.email "${{ vars.EMAIL }}"
         git config --global user.name "${{ vars.NAME }}"
@@ -470,12 +483,12 @@ jobs:
         cp -r /tmp/data_files/data/* data/ 2>/dev/null || true
         cp /tmp/data_files/assets/file-list.txt assets/ 2>/dev/null || true
         cp -r /tmp/data_files/.ai-checkpoints .
-        ls data/*.jsonl | sed 's|data/||' > assets/file-list.txt
+        find data -maxdepth 1 -name '*.jsonl' -printf '%f\n' | sort > assets/file-list.txt
         
         # 只添加数据文件 / Only add data files
         git add data/* 2>/dev/null || true
         git add assets/file-list.txt 2>/dev/null || true
-        git add -f .ai-checkpoints/
+        git add -f .ai-checkpoints/ 2>/dev/null || true
         
         # 检查是否有数据变更需要提交 / Check if there are data changes to commit
         if git diff --staged --quiet; then
@@ -486,7 +499,6 @@ jobs:
         fi
 
     - name: Push data changes to data branch
-      if: steps.dedup_check.outputs.has_new_content == 'true'
       run: |
         # 设置Git配置以处理自动合并 / Set Git config for automatic merging
         git config pull.rebase true

@@ -15,6 +15,18 @@
       authorNames: Array.isArray(value.authorNames) ? value.authorNames : Array.isArray(value.authors) ? value.authors : undefined,
       abstract: typeof value.abstract === 'string' ? value.abstract : typeof value.details === 'string' ? value.details : '',
       published: typeof value.published === 'string' && value.published ? value.published : typeof value.publicationDate === 'string' ? value.publicationDate : '',
+      tldr: typeof value.tldr === 'string' ? value.tldr : '',
+      AI_status: typeof value.AI_status === 'string' ? value.AI_status : '',
+      digest_version: Number.isInteger(value.digest_version) ? value.digest_version : 1,
+      motivation: typeof value.motivation === 'string' ? value.motivation : '',
+      method: typeof value.method === 'string' ? value.method : '',
+      result: typeof value.result === 'string' ? value.result : '',
+      conclusion: typeof value.conclusion === 'string' ? value.conclusion : '',
+      core_method: typeof value.core_method === 'string' ? value.core_method : '',
+      research_topics: Array.isArray(value.research_topics) ? value.research_topics.slice(0, 4) : [],
+      key_results: Array.isArray(value.key_results) ? value.key_results.slice(0, 3) : [],
+      limitations: Array.isArray(value.limitations) ? value.limitations.slice(0, 3) : [],
+      category: value.category || [],
       date: String(value.date || '').slice(0, 40), status: value.status === 'read' ? 'read' : 'pending',
       savedAt: Number.isFinite(value.savedAt) ? value.savedAt : Date.now()};
   };
@@ -66,6 +78,10 @@
   function mount(host, paper) {
     let id;
     try { id = normalizeId(paper.id || paper.url); } catch { return; }
+    const saved = papers.find(p => p.id === id);
+    if (saved && paper.tldr && (!saved.tldr || (!saved.key_results.length && paper.key_results?.length))) {
+      commit(items => items.map(p => p.id === id ? clean({...p, ...paper, status:p.status, savedAt:p.savedAt}) : p));
+    }
     const control = button('', event => {
       event.stopPropagation();
       if (papers.some(p => p.id === id)) { open(); return; }
@@ -96,6 +112,19 @@
     return papers.filter(p => p.status === view && `${p.title} ${p.authors} ${p.summary} ${p.id}`.toLowerCase().includes(query))
       .sort((a, b) => b.savedAt - a.savedAt);
   }
+  function openSaved(paper) {
+    if (!window.PaperDigest) { notify('解读组件未加载，请刷新页面后重试。'); return; }
+    const savedDialog = element('dialog', '', 'digest-saved-dialog');
+    savedDialog.setAttribute('aria-label', '已保存的论文解读');
+    const heading = element('div', '', 'rl-heading');
+    heading.append(element('h2', paper.title), button('返回清单', () => savedDialog.close()));
+    const body = element('div'); body.innerHTML = PaperDigest.details(paper);
+    PaperDigest.attach(body, paper);
+    savedDialog.append(heading, body); document.body.append(savedDialog);
+    savedDialog.addEventListener('keydown', e => e.stopPropagation());
+    savedDialog.addEventListener('close', () => savedDialog.remove(), {once:true});
+    savedDialog.showModal();
+  }
   function render() {
     list.replaceChildren();
     tabs.querySelectorAll('button').forEach(tab => {
@@ -108,15 +137,14 @@
     if (!selected.length) list.append(element('p', query ? '没有匹配的论文，试试标题、作者或 arXiv ID。' : view === 'pending' ? '待读清单是空的。在论文卡片上点「加入待读」，下次就能从这里继续。' : '还没有已读论文。读完后可以手动标记。', 'rl-empty'));
     selected.forEach(paper => {
       const card = element('article', '', 'rl-entry');
-      const title = element('a', paper.title, 'rl-title');
-      title.href = `https://arxiv.org/abs/${paper.id}`; title.target = '_blank'; title.rel = 'noopener noreferrer';
+      const title = button(paper.title, () => openSaved(paper)); title.className = 'rl-title';
       const meta = element('p', `${paper.authors}\n加入于 ${new Date(paper.savedAt).toLocaleDateString()} · ${paper.id}`, 'rl-meta');
       const details = element('details');
       details.append(element('summary', '查看摘要'), element('p', paper.summary || '暂无摘要'));
       const actions = element('div', '', 'rl-actions');
       const pdf = element('a', '打开 PDF', 'rl-button');
       pdf.href = `https://arxiv.org/pdf/${paper.id}`; pdf.target = '_blank'; pdf.rel = 'noopener noreferrer';
-      actions.append(pdf, button(view === 'pending' ? '标记已读' : '放回待读', () => {
+      actions.append(button('阅读解读', () => openSaved(paper)), pdf, button(view === 'pending' ? '标记已读' : '放回待读', () => {
         const before = paper.status;
         if (commit(items => items.map(p => p.id === paper.id ? {...p, status: before === 'read' ? 'pending' : 'read'} : p))) {
           notify(before === 'read' ? '已放回待读' : '已标记为已读', () => {
