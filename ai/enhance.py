@@ -35,6 +35,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, required=True, help="jsonline data file")
     parser.add_argument("--max_workers", type=int, default=1, help="Maximum number of parallel workers")
+    parser.add_argument("--max_papers", type=int, default=50, help="Maximum daily AI papers including pending retries")
     return parser.parse_args()
 
 def process_single_item(chain, item: Dict, language: str) -> Dict:
@@ -124,7 +125,7 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
             return None
     return item
 
-def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int) -> List[Dict]:
+def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int, max_papers: int = 50) -> List[Dict]:
     """并行处理所有数据项"""
     llm = ChatOpenAI(
         **build_chat_openai_kwargs(
@@ -150,7 +151,7 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     ).hexdigest()
     return process_with_checkpoint(
         data, lambda item: process_single_item(chain, item, language),
-        Path("../.ai-checkpoints"), signature, workers=max_workers,
+        Path("../.ai-checkpoints"), signature, workers=max_workers, max_items=max_papers,
     )
 
 
@@ -189,8 +190,9 @@ def main():
         to_summarize,
         model_name,
         language,
-        args.max_workers
-    ) if to_summarize else []
+        args.max_workers,
+        max_papers=args.max_papers,
+    )
 
     # 检查点缓存里可能没有后来新增的字段，按 id 从当日数据回填（例如相关度分数）
     metadata = {item["id"]: item for item in data}
