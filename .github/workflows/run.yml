@@ -145,9 +145,9 @@ jobs:
           --data ../data/${today}.jsonl \
           --scores-out /tmp/screen-${today}.jsonl \
           --threshold "${{ vars.SCREEN_THRESHOLD }}" \
-          --max-papers "${{ vars.SCREEN_MAX_PAPERS }}" \
+          --max-papers 50 \
           --tail-threshold "${{ vars.SCREEN_TAIL_THRESHOLD }}" \
-          --tail-max "${{ vars.SCREEN_TAIL_MAX }}" \
+          --tail-max 0 \
           --workers 8
 
         total=$(wc -l < ../data/${today}.jsonl)
@@ -188,7 +188,7 @@ jobs:
         export LANGUAGE="${{ vars.LANGUAGE }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
         
-        python enhance.py --data ../data/${today}.jsonl --max_workers 8
+        python enhance.py --data ../data/${today}.jsonl --max_workers 8 --max_papers 50
         
         # 检查AI处理是否成功 / Check if AI processing was successful
         if [ $? -ne 0 ]; then
