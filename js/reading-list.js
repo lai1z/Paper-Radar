@@ -2,14 +2,16 @@
 (() => {
   'use strict';
   const KEY = 'paper-radar.reading-list.v1';
+  const LOCK = `${KEY}.mutation`;
   const normalizeId = value => {
-    const id = String(value || '').replace(/^https?:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf|html)\//, '').replace(/\.pdf$/, '').replace(/v\d+$/, '');
+    const id = String(value || '').trim().replace(/^https?:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf|html)\//i, '').replace(/\.pdf$/i, '').replace(/v\d+$/i, '').toLowerCase();
     if (!/^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})$/i.test(id)) throw new Error('论文 ID 无效');
     return id;
   };
   const clean = value => {
+    if (!value || typeof value !== 'object') throw new Error('论文记录无效');
     const id = normalizeId(value.id || value.url);
-    const originalId = String(value.sourceId || value.id || value.url || '').replace(/^https?:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf|html)\//i, '').replace(/\.pdf$/i, '');
+    const originalId = String(value.sourceId || value.id || value.url || '').trim().replace(/^https?:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf|html)\//i, '').replace(/\.pdf$/i, '');
     const sourceId = /^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?$/i.test(originalId) && normalizeId(originalId).toLowerCase() === id.toLowerCase() ? originalId : id;
     if (typeof value.title !== 'string' || !value.title.trim()) throw new Error('论文标题缺失');
     return {id, sourceId, title: value.title.slice(0, 2000), summary: String(value.summary || '').slice(0, 30000),
@@ -37,7 +39,9 @@
     if (data.version !== 1 || !Array.isArray(data.papers)) throw new Error('备份格式不支持');
     return data.papers.map(clean);
   }
-  let papers = [], dialog, list, search, tabs, opener, toast, returnFocus;
+  let papers = [], dialog, list, search, tabs, opener, toast, returnFocus, storageNotice;
+  let mutationQueue = Promise.resolve(), pendingWrites = 0;
+  let pendingListFocus = null;
   let view = 'pending';
   function notify(message, action) {
     toast.replaceChildren(document.createTextNode(message));
@@ -50,17 +54,39 @@
     dismiss.onclick = () => toast.replaceChildren();
     toast.append(dismiss);
   }
+  function setStorageNotice(message = '') {
+    if (!storageNotice) return;
+    storageNotice.textContent = message;
+    storageNotice.hidden = !message;
+  }
   function commit(update) {
-    try {
-      const next = update(read()); // Merge against the latest state from other tabs.
-      localStorage.setItem(KEY, JSON.stringify({version: 1, papers: next}));
-      papers = next;
-      refresh();
-      return true;
-    } catch (error) {
-      notify('保存失败：浏览器存储不可用、已满或数据损坏。请先导出备份。');
-      return false;
-    }
+    pendingWrites++;
+    const transaction = async () => {
+      const write = () => {
+        const next = update(read()); // Read again while holding the cross-tab lock.
+        localStorage.setItem(KEY, JSON.stringify({version: 1, papers: next}));
+        papers = next;
+        setStorageNotice(); refresh();
+        return true;
+      };
+      try {
+        // localStorage read-modify-write alone is not atomic across tabs.
+        // Serialize cooperating tabs; the local queue also supports older browsers.
+        if (!navigator.locks?.request) return write();
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        try { return await navigator.locks.request(LOCK, {signal: controller.signal}, write); }
+        finally { clearTimeout(timeout); }
+      } catch (error) {
+        const message = error.name === 'AbortError'
+          ? '另一窗口正在保存清单，本次尚未保存。请稍后重试。'
+          : '保存失败：浏览器存储不可用、已满或数据损坏。当前清单未被覆盖，请先尝试导出备份。';
+        setStorageNotice(message); notify(message);
+        return false;
+      } finally { pendingWrites--; }
+    };
+    mutationQueue = mutationQueue.then(transaction, transaction);
+    return mutationQueue;
   }
   function element(tag, text, className) {
     const el = document.createElement(tag);
@@ -70,11 +96,28 @@
   }
   function button(text, action) {
     const el = element('button', text, 'rl-button');
-    el.type = 'button'; el.onclick = action;
+    el.type = 'button';
+    el.onclick = event => {
+      const result = action(event);
+      if (result && typeof result.then === 'function') {
+        const wasDisabled = el.disabled;
+        const hadFocus = document.activeElement === el;
+        const entry = hadFocus && el.closest('.rl-entry');
+        if (entry) pendingListFocus = {control:el, id:entry.querySelector('[data-saved-open]')?.dataset.savedOpen, index:[...list.children].indexOf(entry)};
+        el.disabled = true; el.setAttribute('aria-busy', 'true');
+        result.catch(() => notify('操作未完成，请重试或先导出备份。')).finally(() => {
+          el.disabled = wasDisabled; el.removeAttribute('aria-busy');
+          if (pendingListFocus?.control === el) pendingListFocus = null;
+          if (hadFocus && document.activeElement === document.body && el.isConnected && el.getClientRects().length) el.focus();
+        });
+      }
+    };
     return el;
   }
   function open() {
     returnFocus = document.activeElement;
+    try { papers = read(); setStorageNotice(); }
+    catch { setStorageNotice('清单暂时无法读取，原始数据仍保留。请尝试「导出备份」，不要清理网站数据。'); }
     render(); dialog.showModal(); search.focus();
   }
   function mount(host, paper) {
@@ -84,10 +127,10 @@
     if (saved && paper.tldr && (!saved.tldr || (!saved.key_results.length && paper.key_results?.length))) {
       commit(items => items.map(p => p.id === id ? clean({...p, ...paper, sourceId:paper.sourceId || paper.id || paper.url, status:p.status, savedAt:p.savedAt}) : p));
     }
-    const control = button('', event => {
+    const control = button('', async event => {
       event.stopPropagation();
       if (papers.some(p => p.id === id)) { open(); return; }
-      if (commit(items => items.some(p => p.id === id) ? items : [clean({...paper, id, sourceId:paper.sourceId || paper.id || paper.url, status: 'pending', savedAt: Date.now()}), ...items])) {
+      if (await commit(items => items.some(p => p.id === id) ? items : [clean({...paper, id, sourceId:paper.sourceId || paper.id || paper.url, status: 'pending', savedAt: Date.now()}), ...items])) {
         notify('已加入待读。可从顶部「待读」继续阅读。');
       }
     });
@@ -112,7 +155,7 @@
   }
   function visiblePapers() {
     const query = search.value.trim().toLowerCase();
-    return papers.filter(p => p.status === view && `${p.title} ${p.authors} ${p.summary} ${p.id}`.toLowerCase().includes(query))
+    return papers.filter(p => p.status === view && `${p.title} ${p.authors} ${p.summary} ${p.abstract} ${p.core_method} ${p.id}`.toLowerCase().includes(query))
       .sort((a, b) => b.savedAt - a.savedAt);
   }
   function openSaved(paper) {
@@ -134,11 +177,12 @@
     const navigation = element('div', '', 'rl-actions');
     const previous = button('上一篇', () => { position--; show(); });
     const next = button('下一篇', () => { position++; show(); });
-    const mark = button('', () => {
+    const mark = button('', async () => {
       const current = papers.find(item => item.id === sequence[position]);
       if (!current) { state.textContent = '这篇论文已从清单移除，当前仍可查看保存时的解读。'; mark.disabled = true; return; }
       const nextStatus = current.status === 'read' ? 'pending' : 'read';
-      if (commit(items => items.map(item => item.id === current.id ? {...item, status:nextStatus} : item))) {
+      if (await commit(items => items.map(item => item.id === current.id ? {...item, status:nextStatus} : item))) {
+        if (sequence[position] !== current.id) { show(); return; }
         updateState(nextStatus);
         state.textContent = nextStatus === 'read' ? '已标记为已读。可继续查看，或前往下一篇。' : '已放回待读清单。';
       } else state.textContent = '状态保存失败，请返回清单导出备份后重试。';
@@ -172,6 +216,11 @@
     savedDialog.showModal();
   }
   function render() {
+    const focusedEntry = document.activeElement?.closest('.rl-entry');
+    const bookmark = document.activeElement === document.body ? pendingListFocus : null;
+    const focusedId = focusedEntry?.querySelector('[data-saved-open]')?.dataset.savedOpen || bookmark?.id;
+    const oldPosition = focusedEntry ? [...list.children].indexOf(focusedEntry) : bookmark?.index ?? -1;
+    pendingListFocus = null;
     list.replaceChildren();
     tabs.querySelectorAll('button').forEach(tab => {
       tab.setAttribute('aria-pressed', String(tab.dataset.view === view));
@@ -189,21 +238,26 @@
       details.append(element('summary', '查看摘要'), element('p', paper.summary || '暂无摘要'));
       const actions = element('div', '', 'rl-actions');
       const pdf = element('a', '打开 PDF', 'rl-button');
-      pdf.href = `https://arxiv.org/pdf/${paper.id}`; pdf.target = '_blank'; pdf.rel = 'noopener noreferrer';
-      actions.append(button('阅读解读', () => openSaved(paper)), pdf, button(view === 'pending' ? '标记已读' : '放回待读', () => {
+      pdf.href = `https://arxiv.org/pdf/${paper.sourceId || paper.id}`; pdf.target = '_blank'; pdf.rel = 'noopener noreferrer';
+      actions.append(button('阅读解读', () => openSaved(paper)), pdf, button(view === 'pending' ? '标记已读' : '放回待读', async () => {
         const before = paper.status;
-        if (commit(items => items.map(p => p.id === paper.id ? {...p, status: before === 'read' ? 'pending' : 'read'} : p))) {
-          notify(before === 'read' ? '已放回待读' : '已标记为已读', () => {
-            if (commit(items => items.map(p => p.id === paper.id ? {...p, status: before} : p))) notify('已撤销');
+        if (await commit(items => items.map(p => p.id === paper.id ? {...p, status: before === 'read' ? 'pending' : 'read'} : p))) {
+          notify(before === 'read' ? '已放回待读' : '已标记为已读', async () => {
+            if (await commit(items => items.map(p => p.id === paper.id ? {...p, status: before} : p))) notify('已撤销');
           });
         }
-      }), button('移除', () => {
-        if (commit(items => items.filter(p => p.id !== paper.id))) notify('已移出清单', () => {
-          if (commit(items => items.some(p => p.id === paper.id) ? items : [paper, ...items])) notify('已恢复');
+      }), button('移除', async () => {
+        if (await commit(items => items.filter(p => p.id !== paper.id))) notify('已移出清单', async () => {
+          if (await commit(items => items.some(p => p.id === paper.id) ? items : [paper, ...items])) notify('已恢复');
         });
       }));
       card.append(title, meta, details, actions); list.append(card);
     });
+    if (focusedId && dialog.open) {
+      const entries = [...list.querySelectorAll('[data-saved-open]')];
+      const target = entries.find(entry => entry.dataset.savedOpen === focusedId) || entries[Math.min(oldPosition, entries.length - 1)] || search;
+      target.focus();
+    }
   }
   function init() {
     const header = document.querySelector('.header-controls');
@@ -213,6 +267,7 @@
     try { papers = read(); } catch { notify('无法读取待读清单，请保留当前数据并尝试导出备份。'); }
     opener = button('待读 (0)', open); opener.id = 'readingListButton'; header.prepend(opener);
     dialog = element('dialog', '', 'rl-dialog'); dialog.setAttribute('aria-labelledby', 'readingListTitle');
+    storageNotice = element('p', '', 'rl-storage-notice'); storageNotice.hidden = true; storageNotice.setAttribute('role', 'status');
     const heading = element('div', '', 'rl-heading');
     const title = element('h2', '我的阅读清单'); title.id = 'readingListTitle';
     heading.append(title, button('关闭', () => dialog.close()));
@@ -224,11 +279,18 @@
       const tab = button('', () => { view = status; render(); }); tab.dataset.view = status; tabs.append(tab);
     }
     const backups = element('div', '', 'rl-actions');
-    backups.append(button('导出备份', () => {
-      const raw = localStorage.getItem(KEY) || JSON.stringify({version: 1, papers: []});
-      const url = URL.createObjectURL(new Blob([raw], {type: 'application/json'}));
-      const link = element('a'); link.href = url; link.download = `paper-radar-reading-${new Date().toISOString().slice(0, 10)}.json`;
-      link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    backups.append(button('导出备份', async () => {
+      await mutationQueue;
+      try {
+        // Preserve the exact stored bytes, even if a malformed record prevents reading.
+        const raw = localStorage.getItem(KEY) || JSON.stringify({version: 1, papers: []});
+        const url = URL.createObjectURL(new Blob([raw], {type: 'application/json'}));
+        const link = element('a'); link.href = url; link.download = `paper-radar-reading-${new Date().toISOString().slice(0, 10)}.json`;
+        link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch {
+        const message = '无法访问浏览器存储，备份没有生成。请恢复此网站的存储权限后重试，不要清理网站数据。';
+        setStorageNotice(message); notify(message);
+      }
     }));
     const file = element('input'); file.type = 'file'; file.accept = '.json,application/json'; file.hidden = true;
     file.onchange = async () => {
@@ -238,7 +300,7 @@
         const data = JSON.parse(await file.files[0].text());
         if (data.version !== 1 || !Array.isArray(data.papers)) throw new Error('格式错误');
         const imported = data.papers.map(clean);
-        if (commit(items => {
+        if (await commit(items => {
           const map = new Map(items.map(p => [p.id, p]));
           for (const paper of imported) if (!map.has(paper.id)) map.set(paper.id, paper);
           return [...map.values()];
@@ -266,6 +328,7 @@
       return window.ZoteroExport.build(selected);
     }
     async function copySelection(withPDF) {
+      await mutationQueue;
       manualCopy.hidden = true; copyText.value = '';
       let result;
       try { result = exportSelection(); }
@@ -289,7 +352,8 @@
     const metadata = element('details');
     metadata.append(element('summary', '仅导出文献信息（不含 PDF）'));
     const metadataActions = element('div', '', 'rl-actions');
-    metadataActions.append(button('复制文献信息', () => copySelection(false)), button('下载 CSL JSON', () => {
+    metadataActions.append(button('复制文献信息', () => copySelection(false)), button('下载 CSL JSON', async () => {
+      await mutationQueue;
       try {
         const result = exportSelection();
         if (!result.items.length) { notify('没有可导出的论文，请调整范围或搜索条件。'); return; }
@@ -305,7 +369,7 @@
     const zoteroHelp = element('details', '', 'rl-export-help');
     zoteroHelp.append(element('summary', 'PDF、重复条目与导入说明'),
       element('p', '文献信息和 PDF 由 Zotero 从 arXiv 获取；下载完成后，展开条目可查看 PDF 附件。Paper Radar 无法确认 Zotero 的下载结果。若没有 PDF：检查 Zotero「设置 → 常规」中的自动附加相关 PDF 选项及 arXiv 网络访问；也可打开论文原文页，用 Zotero Connector 保存。重复添加可能产生重复条目，请在 Zotero「重复条目」中检查。此操作不改变待读状态或 Better Notes 笔记。', 'rl-meta'));
-    dialog.append(heading, element('p', '跨日期保存 · 最新加入在前 · 打开论文不会自动标记已读', 'rl-meta'), search, tabs, list,
+    dialog.append(heading, storageNotice, element('p', '跨日期保存 · 最新加入在前 · 打开论文不会自动标记已读', 'rl-meta'), search, tabs, list,
       element('h3', '批量导入 Zotero', 'rl-export-title'), zotero,
       element('p', '复制 ID → Zotero 工具栏魔棒「通过标识符添加条目」→ 粘贴并按 Enter，等待 PDF 下载。', 'rl-meta'), zoteroHelp,
       metadata, manualCopy,
@@ -316,8 +380,12 @@
     document.body.append(dialog); refresh();
     window.addEventListener('storage', event => {
       if (event.key === KEY || event.key === null) {
-        try { papers = read(); refresh(); } catch { notify('其他窗口的清单数据无法读取。'); }
+        try { papers = read(); setStorageNotice(); refresh(); }
+        catch { setStorageNotice('其他窗口的清单数据无法读取。已保留本页内容，请尝试导出原始备份。'); notify('其他窗口的清单数据无法读取。'); }
       }
+    });
+    window.addEventListener('beforeunload', event => {
+      if (pendingWrites) { event.preventDefault(); event.returnValue = ''; }
     });
   }
   function status(value) {

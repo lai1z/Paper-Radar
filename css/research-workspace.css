@@ -97,6 +97,14 @@ main { max-width:1280px; padding:0 28px 32px; }
 .paper-navigation .navigation-hint { font-size:11px; color:#6e8093; margin:0 5px; }
 .paper-modal-footer { gap:14px; }
 .loading-container { grid-column:1/-1; }
+.feed-notice { gap:12px; min-height:180px; }
+.feed-notice .workspace-button { margin-top:10px; }
+.date-picker-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.date-picker-heading .date-picker-title { margin:0; }
+.fallback-date-picker { display:grid; gap:12px; min-width:240px; padding:16px 0; }
+.fallback-date-picker label { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.fallback-date-picker label[hidden] { display:none; }
+.fallback-date-picker select { min-height:38px; border:1px solid var(--workspace-line); border-radius:6px; padding:7px; background:#fff; color:var(--workspace-ink); }
 footer { font-size:11px; color:#76879a; background:transparent; border-top:1px solid var(--workspace-line); }
 @media (max-width:1000px) {
   .workspace-toolbar { gap:12px; flex-wrap:wrap; }

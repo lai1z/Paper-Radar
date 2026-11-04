@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
 from provenance import preserve_source
+from paper_history import is_successful
 
 FIELDS = ("tldr", "motivation", "method", "result", "conclusion")
 
@@ -37,6 +38,11 @@ def process_with_checkpoint(items, processor, directory, signature, attempts=3, 
     state = {"success": {}, "pending": {}}
     if path.exists():
         state = json.loads(path.read_text(encoding="utf-8"))
+    def save_progress():
+        # Persist processing recency inside the file. Git archive/cache restore
+        # changes filesystem timestamps, which must not roll progress backward.
+        state["updated_at_ns"] = max(time.time_ns(), state.get("updated_at_ns", 0) + 1)
+        atomic_write(path, state)
     # Retry unfinished papers even when they have left the daily arXiv list.
     work = dict(state["pending"])
     work.update({item["id"]: item for item in items})
@@ -65,7 +71,7 @@ def process_with_checkpoint(items, processor, directory, signature, attempts=3, 
         item.pop("AI_status", None)
         key = checkpoint_key(item)
         cached = state["success"].get(key)
-        if cached is not None:
+        if cached is not None and is_successful(cached):
             # The digest can be reused while author/date/source metadata stays
             # identical to the current input, not a stale cached snapshot.
             refreshed = preserve_source(item, cached)
@@ -74,11 +80,12 @@ def process_with_checkpoint(items, processor, directory, signature, attempts=3, 
             state["pending"].pop(paper_id, None)
             reused += 1
             continue
+        state["success"].pop(key, None)
         state["pending"][paper_id] = item
         jobs.append((paper_id, item, key))
 
     # Persist pending input before spending any API request.
-    atomic_write(path, state)
+    save_progress()
 
     lock = Lock()
     total = len(work)
@@ -122,7 +129,7 @@ def process_with_checkpoint(items, processor, directory, signature, attempts=3, 
                     state["pending"].pop(paper_id, None)
                 else:
                     failed += 1
-            atomic_write(path, state)
+            save_progress()
             done += 1
             print(f"Processed {done}/{total}; reused={reused}, failed={failed}", flush=True)
 
@@ -135,6 +142,6 @@ def process_with_checkpoint(items, processor, directory, signature, attempts=3, 
         for job in jobs:
             record(*run_job(job))
 
-    atomic_write(path, state)
+    save_progress()
     print(f"AI batch: {len(work)} papers, {reused} reused, {failed} pending retry", flush=True)
     return output

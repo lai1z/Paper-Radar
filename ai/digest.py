@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from checkpoint import atomic_write, checkpoint_key
+from restore_checkpoints import state_recency
 
 
 _NUMBER = re.compile(r"(?<![A-Za-z0-9_.])[+\-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?")
@@ -18,6 +19,9 @@ def numeric_values(text):
     thousands separators/decimal zeroes, and retain numbers with common units.
     This does NOT verify units, direction, baselines or semantic entailment.
     """
+    # A hyphen between two magnitudes denotes a range, not a negative second
+    # value. Keep unary signs and scientific exponents intact.
+    text = re.sub(r"(\d[%％]?)\s*[-–—]\s*(?=\d)", r"\1 to ", text or "")
     values = set()
     for match in _NUMBER.finditer(text or ""):
         prefix, suffix = text[:match.start()], text[match.end():]
@@ -91,12 +95,13 @@ def migrate_pending(directory, signature):
     state = _read_state(destination)
     sources = []
     inherited = {}
-    for path in sorted(directory.glob("*.json"), key=lambda p: (p.stat().st_mtime_ns, p.name)):
+    candidates = [(path, _read_state(path)) for path in directory.glob("*.json")
+                  if path != destination and not path.name.startswith("refresh-")]
+    for path, source in sorted(candidates, key=lambda pair: (state_recency(*pair), pair[0].name)):
         # A requested refresh is restricted to its original published day; its
         # failures must not re-enter the next day's new-paper queue.
         if path == destination or path.name.startswith("refresh-"):
             continue
-        source = _read_state(path)
         if source["pending"]:
             inherited.update(source["pending"])
             sources.append((path, source))

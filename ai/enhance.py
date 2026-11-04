@@ -7,7 +7,8 @@ import hashlib
 from pathlib import Path
 from checkpoint import process_with_checkpoint
 from digest import grounded_digest, migrate_pending, defer_items
-from paper_history import canonical_id, fingerprint, is_successful, read_records
+from paper_history import canonical_id, fingerprint, is_successful, read_records, successful_fingerprints
+from recovery import prune_published_pending, unpublished_successes
 from copy import deepcopy
 from provenance import assert_source_preserved
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -42,6 +43,8 @@ def parse_args():
     parser.add_argument("--max_workers", type=int, default=1, help="Maximum number of parallel workers")
     parser.add_argument("--max_papers", type=int, default=50, help="Maximum daily AI papers including pending retries")
     parser.add_argument("--published-data", type=Path, help="Previously published data for this same date, if any")
+    parser.add_argument("--history-dir", type=Path, default=os.environ.get("PAPER_HISTORY_DIR"),
+                        help="Successful publication history, including prior days")
     return parser.parse_args()
 
 def process_single_item(chain, item: Dict, language: str) -> Dict:
@@ -140,7 +143,8 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
     return item
 
 def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int, max_papers: int = 50,
-                      exclude_ids=(), priority_ids=(), published_fingerprints=None) -> List[Dict]:
+                      exclude_ids=(), priority_ids=(), published_fingerprints=None,
+                      history_fingerprints=None) -> List[Dict]:
     """并行处理所有数据项"""
     if max_papers < 0:
         raise ValueError("max_papers must be nonnegative")
@@ -150,18 +154,32 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
                    ensure_ascii=False).encode("utf-8")
     ).hexdigest()
     checkpoint_dir = SCRIPT_DIR.parent / ".ai-checkpoints"
+    if history_fingerprints is not None:
+        removed = prune_published_pending(checkpoint_dir, history_fingerprints)
+        if removed:
+            print(f"Removed {removed} already-published papers from the retry queue", file=sys.stderr)
+        data = [row for row in data if fingerprint(row) not in history_fingerprints]
     migrate_pending(checkpoint_dir, signature)
     published_fingerprints = published_fingerprints or {}
     active_path = checkpoint_dir / f"{signature}.json"
     queued = json.loads(active_path.read_text(encoding="utf-8"))["pending"] if active_path.exists() else {}
     latest = {**queued, **{item['id']: item for item in data}}
+    recovered = []
+    if history_fingerprints is not None:
+        recovered = [row for row in unpublished_successes(checkpoint_dir, history_fingerprints, latest.values())
+                     if canonical_id(row) not in exclude_ids][:max_papers]
+    recovered_ids = {canonical_id(row) for row in recovered}
+    exclude_ids = set(exclude_ids) | recovered_ids
+    remaining = max_papers - len(recovered)
+    if recovered:
+        print(f"Recovered {len(recovered)} completed but unpublished digests without new AI requests", file=sys.stderr)
     defer_ids = {canonical_id(item) for item in latest.values()
                  if canonical_id(item) in published_fingerprints
                  and fingerprint(item) != published_fingerprints[canonical_id(item)]}
-    if max_papers == 0:
+    if remaining == 0:
         defer_items(data, checkpoint_dir, signature, exclude_ids, defer_ids)
         print('Daily publication budget is full; selected papers remain queued', file=sys.stderr)
-        return []
+        return recovered
     llm = ChatOpenAI(
         **build_chat_openai_kwargs(
             model_name=model_name,
@@ -179,9 +197,9 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
 
     chain = prompt_template | llm
     
-    return process_with_checkpoint(
+    return recovered + process_with_checkpoint(
         data, lambda item: process_single_item(chain, item, language),
-        checkpoint_dir, signature, workers=max_workers, max_items=max_papers,
+        checkpoint_dir, signature, workers=max_workers, max_items=remaining,
         exclude_ids=exclude_ids, priority_ids=priority_ids, defer_ids=defer_ids,
     )
 
@@ -197,6 +215,12 @@ def main():
     published_fingerprints = {canonical_id(item): fingerprint(item) for item in published if is_successful(item)}
     retry_ids = {canonical_id(item) for item in published if item.get("AI_status") == "failed"}
     budget = max(0, args.max_papers - len(completed_ids))
+    history_fingerprints = None
+    if args.history_dir:
+        publication_date = Path(args.data).name[:10]
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", publication_date):
+            raise ValueError("History reconciliation requires a dated input filename")
+        history_fingerprints, _ = successful_fingerprints(args.history_dir, publication_date)
 
     # 检查并删除目标文件
     target_file = args.data.replace('.jsonl', f'_AI_enhanced_{language}.jsonl')
@@ -234,6 +258,7 @@ def main():
         exclude_ids=completed_ids,
         priority_ids=retry_ids,
         published_fingerprints=published_fingerprints,
+        history_fingerprints=history_fingerprints,
     )
 
     # 检查点缓存里可能没有后来新增的字段，按 id 从当日数据回填（例如相关度分数）

@@ -14,7 +14,8 @@
   // Availability check only: matching a number does not verify its units,
   // baseline, direction, or the scientific validity of a claim.
   function numericValues(value) {
-    const content = text(value), values = new Set();
+    // A range separator is not a unary minus: 70-100 and 70 至 100 agree.
+    const content = text(value).replace(/(\d[%％]?)\s*[-–—]\s*(?=\d)/g, '$1 to '), values = new Set();
     for (const match of content.matchAll(/(?<![A-Za-z0-9_.])[+\-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?/g)) {
       const prefix = content.slice(0, match.index), suffix = content.slice(match.index + match[0].length);
       if (/[A-Za-z][A-Za-z0-9_]*[-.]$/.test(prefix)) continue;

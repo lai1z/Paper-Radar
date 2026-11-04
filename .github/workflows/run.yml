@@ -97,7 +97,7 @@ jobs:
         
         # 使用Scrapy爬取
         # Use Scrapy to crawl
-        scrapy crawl arxiv -o ../data/${today}.jsonl
+        python crawl.py --output ../data/${today}.jsonl
         
         # 检查爬取是否成功 / Check if crawling was successful
         if [ ! -f "../data/${today}.jsonl" ]; then
@@ -225,7 +225,8 @@ jobs:
             --out "../data/${today}_AI_enhanced_${LANGUAGE}.jsonl" --max-workers 8
         else
           python enhance.py --data ../data/${today}.jsonl --max_workers 8 --max_papers 50 \
-            --published-data "$PAPER_HISTORY_DIR/${today}_AI_enhanced_${LANGUAGE}.jsonl"
+            --published-data "$PAPER_HISTORY_DIR/${today}_AI_enhanced_${LANGUAGE}.jsonl" \
+            --history-dir "$PAPER_HISTORY_DIR"
         fi
         
         # 检查AI处理是否成功 / Check if AI processing was successful

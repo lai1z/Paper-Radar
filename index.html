@@ -8,9 +8,9 @@
     <link rel="icon" type="image/png" href="assets/logo2-removebg-preview.png">
     <link rel="shortcut icon" type="image/png" href="assets/logo2-removebg-preview.png">
     <link rel="stylesheet" href="css/styles.css">
-    <link rel="stylesheet" href="css/reading-list.css?v=20261102-workspace">
-    <link rel="stylesheet" href="css/paper-digest.css?v=20261102-workspace">
-    <link rel="stylesheet" href="css/research-workspace.css?v=20261102-workspace">
+    <link rel="stylesheet" href="css/reading-list.css?v=20261104-reliability">
+    <link rel="stylesheet" href="css/paper-digest.css?v=20261104-reliability">
+    <link rel="stylesheet" href="css/research-workspace.css?v=20261104-reliability">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
@@ -19,7 +19,7 @@
     <script src="js/auth-config.js"></script>
     <script src="js/auth.js"></script>
     <!-- Data Source Configuration -->
-    <script src="js/data-config.js?v=20261102-workspace"></script>
+    <script src="js/data-config.js?v=20261104-reliability"></script>
     <script>
         // Check authentication on page load
         Auth.requireAuth();
@@ -193,10 +193,10 @@
         </section>
 
         <main>
-            <div class="date-picker-modal" id="datePickerModal">
+            <div class="date-picker-modal" id="datePickerModal" role="dialog" aria-modal="true" aria-labelledby="datePickerTitle">
                 <div class="date-picker-content">
                     <div class="date-picker-body">
-                        <h3 class="date-picker-title">选择收录日期</h3>
+                        <div class="date-picker-heading"><h3 class="date-picker-title" id="datePickerTitle">选择收录日期</h3><button id="closeDatePicker" type="button" class="workspace-button" aria-label="关闭日期选择器">关闭</button></div>
                         <div class="flatpickr-container">
                             <input type="text" id="datepicker" placeholder="Select Date" data-input>
                         </div>
@@ -284,9 +284,9 @@
     </button>
 
     <script src="js/zotero-export.js?v=pdf-lookup-1"></script>
-    <script src="js/paper-digest.js?v=20261102-workspace"></script>
-    <script src="js/reading-list.js?v=20261102-workspace"></script>
-    <script src="js/research-workspace.js?v=20261102-workspace"></script>
-    <script src="js/app.js?v=20261102-workspace"></script>
+    <script src="js/paper-digest.js?v=20261104-reliability"></script>
+    <script src="js/reading-list.js?v=20261104-reliability"></script>
+    <script src="js/research-workspace.js?v=20261104-reliability"></script>
+    <script src="js/app.js?v=20261104-reliability"></script>
 </body>
 </html> 

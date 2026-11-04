@@ -34,6 +34,14 @@ class DigestTests(unittest.TestCase):
         quote = 'Our method evaluates 1,000 tasks with 38.0% success.'
         self.assertTrue(supported_result({'finding': '1000项任务成功率38%', 'setting': '', 'evidence_quote': quote}, quote))
 
+    def test_numeric_ranges_are_not_negative_measurements(self):
+        quote = 'Each component improved success by 70-100 percentage points.'
+        result = {'finding': '各组件提升70至100个百分点', 'setting': '', 'evidence_quote': quote}
+        self.assertTrue(supported_result(result, quote))
+        self.assertEqual(numeric_values('70%-100%; 70 – 100; 70—100'), numeric_values('70 100'))
+        self.assertEqual(numeric_values('r = -0.70 to -0.80; 1e-3'), numeric_values('-0.70、-0.80、0.001'))
+        self.assertFalse(supported_result({**result, 'finding': '各组件提升70至110个百分点'}, quote))
+
     def test_refresh_pending_never_migrates_into_new_daily_work(self):
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)

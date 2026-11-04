@@ -20,10 +20,78 @@ let paperSort = 'relevance';
 let onlyMatched = false;
 let modalReturnFocus = null;
 let paperLoadSequence = 0;
+let feedLoadState = 'idle';
+let feedLoadController = null;
+let datePickerReturnFocus = null;
 let feedUpdateStatus = null;
 let textSearchQuery = ''; // 实时文本搜索查询
 let previousActiveKeywords = null; // 文本搜索激活时，暂存之前的关键词激活集合
 let previousActiveAuthors = null; // 文本搜索激活时，暂存之前的作者激活集合
+
+async function fetchFeedText(url, signal) {
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  signal?.addEventListener('abort', cancel, {once: true});
+  if (signal?.aborted) controller.abort();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 15000);
+  try {
+    const response = await fetch(url, {cache: 'no-store', signal: controller.signal});
+    if (!response.ok) {
+      const error = new Error(`HTTP ${response.status}`); error.status = response.status; throw error;
+    }
+    return await response.text();
+  } catch (error) {
+    if (timedOut) throw new Error('连接超时，请重试。');
+    throw error;
+  } finally {
+    clearTimeout(timer); signal?.removeEventListener('abort', cancel);
+  }
+}
+
+function showFeedNotice(message, retry, detail = '') {
+  const container = document.getElementById('paperContainer');
+  const notice = document.createElement('div'); notice.className = 'loading-container feed-notice';
+  notice.setAttribute('role', 'status');
+  const paragraph = document.createElement('p'); paragraph.textContent = message; notice.append(paragraph);
+  if (detail) { const hint = document.createElement('p'); hint.textContent = detail; notice.append(hint); }
+  if (retry) {
+    const button = document.createElement('button'); button.type = 'button';
+    button.className = 'workspace-button'; button.textContent = '重新加载'; button.onclick = retry;
+    notice.append(button);
+  }
+  container.replaceChildren(notice);
+  container.setAttribute('aria-busy', String(feedLoadState === 'loading'));
+}
+
+function beginPaperLoad(label) {
+  feedLoadController?.abort(); feedLoadController = new AbortController();
+  const sequence = ++paperLoadSequence;
+  feedLoadState = 'loading'; paperData = {}; currentFilteredPapers = [];
+  if (document.getElementById('paperModal').classList.contains('active')) closeModal();
+  renderCategoryFilter({sortedCategories: [], categoryCounts: {}});
+  updateResearchWorkspace([], [], []);
+  document.getElementById('workspaceDate').textContent = `正在加载 ${label} 收录…`;
+  document.getElementById('resultSummary').textContent = '正在读取论文';
+  showFeedNotice(`正在加载 ${label} 的论文…`);
+  return {sequence, signal: feedLoadController.signal};
+}
+
+function failPaperLoad(label, retry, error) {
+  feedLoadState = 'error'; paperData = {}; currentFilteredPapers = [];
+  document.getElementById('workspaceDate').textContent = `${label} 收录加载失败`;
+  document.getElementById('resultSummary').textContent = '数据尚未加载';
+  showFeedNotice('暂时无法读取所选日期的论文。', retry,
+    error?.code === 'INVALID_PAPER_DATA' ? '论文数据暂不完整，请重新加载；若仍失败，可选择其他收录日期。' :
+    error?.status === 404 ? '该日期的数据文件暂不可用，可重试或选择其他日期。' : '请检查网络后重试，或选择其他收录日期。');
+}
+
+function readPreferenceList(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.trim()) : [];
+  } catch (_) { return []; }
+}
 
 function initResearchWorkspace() {
   try {
@@ -121,6 +189,9 @@ function renderFeedUpdateStatus() {
   }
   const checked = new Date(feedUpdateStatus.checked_at).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false});
   host.textContent = `最近成功检查：${checked}（本地时间） · 最新收录：${feedUpdateStatus.latest_publication_date || availableDates[0] || '暂无'}`;
+  if (Number.isInteger(feedUpdateStatus.pending_paper_count) && feedUpdateStatus.pending_paper_count > 0) {
+    host.append(` · 还有 ${feedUpdateStatus.pending_paper_count} 篇等待后续处理`);
+  }
   try {
     const url = new URL(feedUpdateStatus.run_url);
     if (url.protocol === 'https:' && url.hostname === 'github.com' && url.pathname.includes('/actions/runs/')) {
@@ -139,21 +210,8 @@ function trapModalFocus(event, modal) {
 
 // 加载用户的关键词设置
 function loadUserKeywords() {
-  const savedKeywords = localStorage.getItem('preferredKeywords');
-  if (savedKeywords) {
-    try {
-      userKeywords = JSON.parse(savedKeywords);
-      // 默认激活所有关键词
-      activeKeywords = [...userKeywords];
-    } catch (error) {
-      console.error('解析关键词失败:', error);
-      userKeywords = [];
-      activeKeywords = [];
-    }
-  } else {
-    userKeywords = [];
-    activeKeywords = [];
-  }
+  userKeywords = readPreferenceList('preferredKeywords');
+  activeKeywords = [...userKeywords];
   
   // renderKeywordTags();
   renderFilterTags();
@@ -161,21 +219,8 @@ function loadUserKeywords() {
 
 // 加载用户的作者设置
 function loadUserAuthors() {
-  const savedAuthors = localStorage.getItem('preferredAuthors');
-  if (savedAuthors) {
-    try {
-      userAuthors = JSON.parse(savedAuthors);
-      // 默认激活所有作者
-      activeAuthors = [...userAuthors];
-    } catch (error) {
-      console.error('解析作者失败:', error);
-      userAuthors = [];
-      activeAuthors = [];
-    }
-  } else {
-    userAuthors = [];
-    activeAuthors = [];
-  }
+  userAuthors = readPreferenceList('preferredAuthors');
+  activeAuthors = [...userAuthors];
   
   renderFilterTags();
 }
@@ -204,11 +249,13 @@ function renderFilterTags() {
   // 先添加作者标签
   if (userAuthors && userAuthors.length > 0) {
     userAuthors.forEach(author => {
-      const tagElement = document.createElement('span');
+      const tagElement = document.createElement('button');
+      tagElement.type = 'button';
       tagElement.className = `category-button author-button ${activeAuthors.includes(author) ? 'active' : ''}`;
       tagElement.textContent = author;
       tagElement.dataset.author = author;
       tagElement.title = "匹配作者姓名";
+      tagElement.setAttribute('aria-pressed', String(activeAuthors.includes(author)));
       
       tagElement.addEventListener('click', () => {
         toggleAuthorFilter(author);
@@ -229,11 +276,13 @@ function renderFilterTags() {
   // 再添加关键词标签
   if (userKeywords && userKeywords.length > 0) {
     userKeywords.forEach(keyword => {
-      const tagElement = document.createElement('span');
+      const tagElement = document.createElement('button');
+      tagElement.type = 'button';
       tagElement.className = `category-button keyword-button ${activeKeywords.includes(keyword) ? 'active' : ''}`;
       tagElement.textContent = keyword;
       tagElement.dataset.keyword = keyword;
       tagElement.title = "匹配标题和摘要中的关键词";
+      tagElement.setAttribute('aria-pressed', String(activeKeywords.includes(keyword)));
       
       tagElement.addEventListener('click', () => {
         toggleKeywordFilter(keyword);
@@ -273,6 +322,7 @@ function toggleKeywordFilter(keyword) {
       
       // 添加/移除激活状态
       tag.classList.toggle('active', activeKeywords.includes(keyword));
+      tag.setAttribute('aria-pressed', String(activeKeywords.includes(keyword)));
       
       // 添加高亮动画
       setTimeout(() => {
@@ -312,6 +362,7 @@ function toggleAuthorFilter(author) {
       
       // 添加/移除激活状态
       tag.classList.toggle('active', activeAuthors.includes(author));
+      tag.setAttribute('aria-pressed', String(activeAuthors.includes(author)));
       
       // 添加高亮动画
       setTimeout(() => {
@@ -548,13 +599,20 @@ document.addEventListener('DOMContentLoaded', () => {
   urlAuthorParam = getUrlAuthor();
   urlKeywordsParam = getUrlKeywords();
 
-  fetchAvailableDates().then(() => {
-    if (availableDates.length > 0) {
-      loadPapersByDate(availableDates[0]);
-    } else {
-      document.getElementById('workspaceDate').textContent = '暂时无法读取收录目录';
-      document.getElementById('paperContainer').innerHTML = '<div class="loading-container"><p>没有读取到可用论文。请稍后刷新，或通过「查看运行」检查最新更新。</p></div>';
+  loadLatestFeed();
+  window.addEventListener('storage', event => {
+    if (urlJsonParam !== null || urlKeywordsParam || urlAuthorParam) return;
+    if (event.key === 'preferredKeywords' || event.key === null) {
+      const allActive = userKeywords.every(value => activeKeywords.includes(value)) && activeKeywords.every(value => userKeywords.includes(value));
+      userKeywords = readPreferenceList('preferredKeywords');
+      activeKeywords = allActive ? [...userKeywords] : activeKeywords.filter(value => userKeywords.includes(value));
     }
+    if (event.key === 'preferredAuthors' || event.key === null) {
+      const allActive = userAuthors.every(value => activeAuthors.includes(value)) && activeAuthors.every(value => userAuthors.includes(value));
+      userAuthors = readPreferenceList('preferredAuthors');
+      activeAuthors = allActive ? [...userAuthors] : activeAuthors.filter(value => userAuthors.includes(value));
+    }
+    if (['preferredKeywords', 'preferredAuthors', null].includes(event.key)) { renderFilterTags(); renderPapers(); }
   });
 });
 
@@ -595,6 +653,7 @@ function initEventListeners() {
   });
 
   document.getElementById('dateRangeMode').addEventListener('change', toggleRangeMode);
+  document.getElementById('closeDatePicker').addEventListener('click', toggleDatePicker);
   
   // 其他原有的事件监听器
   document.getElementById('closeModal').addEventListener('click', closeModal);
@@ -660,6 +719,7 @@ function initEventListeners() {
     if (event.key === 'Tab') {
       const modal = document.getElementById('paperModal');
       if (modal.classList.contains('active')) trapModalFocus(event, modal);
+      else if (document.getElementById('datePickerModal').classList.contains('active')) trapModalFocus(event, document.getElementById('datePickerModal'));
     }
   });
 
@@ -788,47 +848,39 @@ function selectLanguageForDate(date, preferredLanguage = null) {
   return availableLanguages.includes('Chinese') ? 'Chinese' : availableLanguages[0];
 }
 
-async function fetchAvailableDates() {
+async function loadLatestFeed() {
+  const request = beginPaperLoad('最新');
   try {
-    // 从 data 分支获取文件列表
-    const fileListUrl = DATA_CONFIG.getDataUrl('assets/file-list.txt');
-    const response = await fetch(fileListUrl, {cache: 'no-store'});
-    if (!response.ok) {
-      console.error('Error fetching file list:', response.status);
-      return [];
+    await fetchAvailableDates(request.signal);
+    if (request.sequence !== paperLoadSequence) return;
+    if (availableDates.length) await loadPapersByDate(availableDates[0]);
+    else {
+      feedLoadState = 'empty';
+      document.getElementById('workspaceDate').textContent = '暂无可用收录';
+      document.getElementById('resultSummary').textContent = '暂未发布论文数据';
+      showFeedNotice('尚未找到已发布的论文数据。', loadLatestFeed, '可稍后重试，或查看最近一次工作流。');
     }
-    const text = await response.text();
-    const files = text.trim().split('\n');
-
-    const dateRegex = /(\d{4}-\d{2}-\d{2})_AI_enhanced_(English|Chinese)\.jsonl/;
-    const dateLanguageMap = new Map(); // Store date -> available languages
-    const dates = [];
-    
-    files.forEach(file => {
-      const match = file.match(dateRegex);
-      if (match && match[1] && match[2]) {
-        const date = match[1];
-        const language = match[2];
-        
-        if (!dateLanguageMap.has(date)) {
-          dateLanguageMap.set(date, []);
-          dates.push(date);
-        }
-        dateLanguageMap.get(date).push(language);
-      }
-    });
-    
-    // Store the language mapping globally for later use
-    window.dateLanguageMap = dateLanguageMap;
-    availableDates = [...new Set(dates)];
-    availableDates.sort((a, b) => new Date(b) - new Date(a));
-
-    initDatePicker(); // Assuming this function uses availableDates
-
-    return availableDates;
   } catch (error) {
-    console.error('获取可用日期失败:', error);
+    if (request.sequence !== paperLoadSequence) return;
+    failPaperLoad('收录目录', loadLatestFeed, error);
   }
+}
+
+async function fetchAvailableDates(signal) {
+  const text = await fetchFeedText(DATA_CONFIG.getDataUrl('assets/file-list.txt'), signal);
+  const dateRegex = /^(\d{4}-\d{2}-\d{2})_AI_enhanced_(English|Chinese)\.jsonl$/;
+  const dateLanguageMap = new Map();
+  text.trim().split('\n').forEach(file => {
+    const match = file.trim().match(dateRegex);
+    if (!match) return;
+    const [, date, language] = match;
+    if (!dateLanguageMap.has(date)) dateLanguageMap.set(date, []);
+    dateLanguageMap.get(date).push(language);
+  });
+  window.dateLanguageMap = dateLanguageMap;
+  availableDates = [...dateLanguageMap.keys()].sort().reverse();
+  initDatePicker();
+  return availableDates;
 }
 
 function initDatePicker() {
@@ -836,6 +888,12 @@ function initDatePicker() {
   
   if (flatpickrInstance) {
     flatpickrInstance.destroy();
+  }
+  if (typeof flatpickr !== 'function') {
+    datepickerInput.hidden = true;
+    flatpickrInstance = null;
+    initFallbackDatePicker();
+    return;
   }
   
   // 创建可用日期的映射，用于禁用无效日期
@@ -855,8 +913,9 @@ function initDatePicker() {
         const dateStr = date.getFullYear() + "-" +
                         String(date.getMonth() + 1).padStart(2, '0') + "-" +
                         String(date.getDate()).padStart(2, '0');
-        // 在 availableDates[0] 之后的日期全部返回 false，否则返回 true
-        return dateStr <= availableDates[0];
+        return isRangeMode
+          ? dateStr <= availableDates[0] && dateStr >= availableDates[availableDates.length - 1]
+          : !!enabledDatesMap[dateStr];
       }
     ],
     onChange: function(selectedDates, dateStr) {
@@ -884,6 +943,31 @@ function initDatePicker() {
   }
 }
 
+function initFallbackDatePicker() {
+  document.getElementById('fallbackDatePicker')?.remove();
+  const fallback = document.createElement('div'); fallback.id = 'fallbackDatePicker';
+  fallback.className = 'fallback-date-picker';
+  const help = document.createElement('p'); help.textContent = '选择已收录日期'; fallback.append(help);
+  const createSelect = (label, id) => {
+    const host = document.createElement('label'); host.textContent = label;
+    const select = document.createElement('select'); select.id = id;
+    availableDates.forEach(date => { const option = document.createElement('option'); option.value = date; option.textContent = date; select.append(option); });
+    host.append(select); fallback.append(host); return select;
+  };
+  const start = createSelect('开始日期', 'fallbackStartDate');
+  const end = createSelect('结束日期', 'fallbackEndDate');
+  end.parentElement.hidden = !isRangeMode;
+  const submit = document.createElement('button'); submit.type = 'button'; submit.className = 'workspace-button'; submit.textContent = '查看论文';
+  submit.disabled = !availableDates.length;
+  submit.onclick = () => {
+    if (isRangeMode) loadPapersByDateRange(start.value, end.value);
+    else loadPapersByDate(start.value);
+    toggleDatePicker();
+  };
+  fallback.append(submit);
+  document.querySelector('.flatpickr-container').append(fallback);
+}
+
 function formatDateForAPI(date) {
   return date.getFullYear() + "-" + 
          String(date.getMonth() + 1).padStart(2, '0') + "-" + 
@@ -896,67 +980,29 @@ function toggleRangeMode() {
   if (flatpickrInstance) {
     flatpickrInstance.set('mode', isRangeMode ? 'range' : 'single');
   }
+  const fallbackEnd = document.getElementById('fallbackEndDate');
+  if (fallbackEnd) fallbackEnd.parentElement.hidden = !isRangeMode;
 }
 
 async function loadPapersByDate(date) {
-  const loadSequence = ++paperLoadSequence;
   currentDate = date;
-  document.getElementById('workspaceDate').textContent = `正在加载 ${date} 收录…`;
-  document.getElementById('currentDate').textContent = formatDate(date);
-  
-  // 更新日期选择器中的选中日期
-  if (flatpickrInstance) {
-    flatpickrInstance.setDate(date, false);
-  }
-  
-  // 不再重置激活的关键词和作者
-  // 而是保持当前选择状态
-  
+  const request = beginPaperLoad(date);
   const container = document.getElementById('paperContainer');
-  container.innerHTML = `
-    <div class="loading-container">
-      <div class="loading-spinner"></div>
-      <p>Loading paper...</p>
-    </div>
-  `;
-  
+  document.getElementById('currentDate').textContent = formatDate(date);
+  if (flatpickrInstance) flatpickrInstance.setDate(date, false);
   try {
     const selectedLanguage = selectLanguageForDate(date);
-    // 从 data 分支获取数据文件
-    const dataUrl = DATA_CONFIG.getDataUrl(`data/${date}_AI_enhanced_${selectedLanguage}.jsonl`);
-    const response = await fetch(dataUrl, {cache: 'no-store'});
-    if (loadSequence !== paperLoadSequence) return;
-    // 如果文件不存在（例如返回 404），在论文展示区域提示没有论文
-    if (!response.ok) {
-      if (response.status === 404) {
-        container.innerHTML = `
-          <div class="loading-container">
-            <p>No papers found for this date.</p>
-          </div>
-        `;
-        paperData = {};
-        renderCategoryFilter({ sortedCategories: [], categoryCounts: {} });
-        updateResearchWorkspace([], [], []);
-        return;
-      }
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const text = await response.text();
-    if (loadSequence !== paperLoadSequence) return;
-    // 空文件也提示没有论文
-    if (!text || text.trim() === '') {
-      container.innerHTML = `
-        <div class="loading-container">
-          <p>No papers found for this date.</p>
-        </div>
-      `;
-      paperData = {};
-      renderCategoryFilter({ sortedCategories: [], categoryCounts: {} });
+    const text = await fetchFeedText(DATA_CONFIG.getDataUrl(`data/${date}_AI_enhanced_${selectedLanguage}.jsonl`), request.signal);
+    if (request.sequence !== paperLoadSequence) return;
+    if (!text.trim()) {
+      feedLoadState = 'empty';
       updateResearchWorkspace([], [], []);
+      showFeedNotice('这个收录日期暂无论文。', () => loadPapersByDate(date));
       return;
     }
-    
     paperData = parseJsonlData(text, date);
+    feedLoadState = 'ready';
+    container.setAttribute('aria-busy', 'false');
 
     const categories = getAllCategories(paperData);
 
@@ -984,24 +1030,18 @@ async function loadPapersByDate(date) {
 
     renderPapers();
   } catch (error) {
-    if (loadSequence !== paperLoadSequence) return;
-    console.error('加载论文数据失败:', error);
-    document.getElementById('workspaceDate').textContent = `${date} 收录加载失败，请重试`;
-    container.innerHTML = `
-      <div class="loading-container">
-        <p>Loading data fails. Please retry.</p>
-        <p>Error messages: ${PaperDigest.escape(error.message)}</p>
-      </div>
-    `;
+    if (request.sequence !== paperLoadSequence) return;
+    failPaperLoad(date, () => loadPapersByDate(date), error);
   }
 }
 
 function parseJsonlData(jsonlText, date) {
   const result = {};
   
-  const lines = jsonlText.trim().split('\n');
+  const lines = jsonlText.split('\n');
   
-  lines.forEach(line => {
+  lines.forEach((line, index) => {
+    if (!line.trim()) return;
     try {
       const paper = JSON.parse(line);
       
@@ -1052,7 +1092,9 @@ function parseJsonlData(jsonlText, date) {
         code_last_update: paper.code_last_update || ''
       });
     } catch (error) {
-      console.error('解析JSON行失败:', error, line);
+      const invalidData = new Error(`论文数据解析失败：${date}，第 ${index + 1} 行。`);
+      invalidData.code = 'INVALID_PAPER_DATA';
+      throw invalidData;
     }
   });
 
@@ -1200,6 +1242,7 @@ function formatAuthorsForCard(authorsString, authorTerms = []) {
 }
 
 function renderPapers() {
+  if (!['idle', 'ready'].includes(feedLoadState)) return;
   const container = document.getElementById('paperContainer');
   container.innerHTML = '';
   container.className = `paper-container ${currentView === 'compact' ? 'compact-view' : ''}`;
@@ -1476,6 +1519,7 @@ function showRandomPaperIndicator() {
 
 function toggleDatePicker() {
   const datePicker = document.getElementById('datePickerModal');
+  if (!datePicker.classList.contains('active')) datePickerReturnFocus = document.activeElement;
   datePicker.classList.toggle('active');
   
   if (datePicker.classList.contains('active')) {
@@ -1483,10 +1527,13 @@ function toggleDatePicker() {
     
     // 重新初始化日期选择器以确保它反映最新的可用日期
     if (flatpickrInstance) {
-      flatpickrInstance.setDate(currentDate, false);
+      const selection = currentDate.split(' to ');
+      flatpickrInstance.setDate(isRangeMode ? selection : selection[0], false);
     }
+    document.getElementById('closeDatePicker').focus();
   } else {
     document.body.style.overflow = '';
+    datePickerReturnFocus?.focus();
   }
 }
 
@@ -1501,59 +1548,41 @@ function formatDate(dateString) {
 }
 
 async function loadPapersByDateRange(startDate, endDate) {
-  const loadSequence = ++paperLoadSequence;
-  // 兼容用户反向点击日期（先点结束日再点开始日）的场景
   const normalizedStartDate = startDate <= endDate ? startDate : endDate;
   const normalizedEndDate = startDate <= endDate ? endDate : startDate;
-
-  // 获取日期范围内的所有有效日期
-  const validDatesInRange = availableDates.filter(date => {
-    return date >= normalizedStartDate && date <= normalizedEndDate;
-  });
-  
-  if (validDatesInRange.length === 0) {
-    alert('No available papers in the selected date range.');
+  const validDatesInRange = availableDates.filter(date => date >= normalizedStartDate && date <= normalizedEndDate);
+  currentDate = `${normalizedStartDate} to ${normalizedEndDate}`;
+  const label = `${normalizedStartDate} 至 ${normalizedEndDate}`;
+  const request = beginPaperLoad(label);
+  const container = document.getElementById('paperContainer');
+  document.getElementById('currentDate').textContent = label;
+  if (!validDatesInRange.length) {
+    feedLoadState = 'empty';
+    updateResearchWorkspace([], [], []);
+    showFeedNotice('所选范围没有已收录的论文，请选择其他日期。');
     return;
   }
-  
-  currentDate = `${normalizedStartDate} to ${normalizedEndDate}`;
-  document.getElementById('currentDate').textContent = `${formatDate(normalizedStartDate)} - ${formatDate(normalizedEndDate)}`;
-  
-  // 不再重置激活的关键词和作者
-  // 而是保持当前选择状态
-  
-  const container = document.getElementById('paperContainer');
-  container.innerHTML = `
-    <div class="loading-container">
-      <div class="loading-spinner"></div>
-      <p>Loading papers from ${formatDate(normalizedStartDate)} to ${formatDate(normalizedEndDate)}...</p>
-    </div>
-  `;
-  
   try {
-    // 加载所有日期的论文数据
     const allPaperData = {};
-    
-    for (const date of validDatesInRange) {
-      const selectedLanguage = selectLanguageForDate(date);
-      // 从 data 分支获取数据文件
-      const dataUrl = DATA_CONFIG.getDataUrl(`data/${date}_AI_enhanced_${selectedLanguage}.jsonl`);
-      const response = await fetch(dataUrl, {cache: 'no-store'});
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const text = await response.text();
-      if (loadSequence !== paperLoadSequence) return;
-      const dataPapers = parseJsonlData(text, date);
-      
-      // 合并数据
-      Object.keys(dataPapers).forEach(category => {
-        if (!allPaperData[category]) {
-          allPaperData[category] = [];
-        }
-        allPaperData[category] = allPaperData[category].concat(dataPapers[category]);
+    // Four requests at a time; publish the selected range only after all succeed.
+    for (let offset = 0; offset < validDatesInRange.length; offset += 4) {
+      const batch = validDatesInRange.slice(offset, offset + 4);
+      const sources = await Promise.all(batch.map(async date => {
+        const language = selectLanguageForDate(date);
+        return [date, await fetchFeedText(DATA_CONFIG.getDataUrl(`data/${date}_AI_enhanced_${language}.jsonl`), request.signal)];
+      }));
+      if (request.sequence !== paperLoadSequence) return;
+      sources.forEach(([date, text]) => {
+        const dataPapers = parseJsonlData(text, date);
+        Object.keys(dataPapers).forEach(category => {
+          allPaperData[category] = (allPaperData[category] || []).concat(dataPapers[category]);
+        });
       });
+      document.getElementById('resultSummary').textContent = `已读取 ${Math.min(offset + 4, validDatesInRange.length)} / ${validDatesInRange.length} 期`;
     }
-    
     paperData = allPaperData;
+    feedLoadState = 'ready';
+    container.setAttribute('aria-busy', 'false');
 
     const categories = getAllCategories(paperData);
 
@@ -1581,14 +1610,9 @@ async function loadPapersByDateRange(startDate, endDate) {
 
     renderPapers();
   } catch (error) {
-    if (loadSequence !== paperLoadSequence) return;
-    console.error('加载论文数据失败:', error);
-    container.innerHTML = `
-      <div class="loading-container">
-        <p>Loading data fails. Please retry.</p>
-        <p>Error messages: ${PaperDigest.escape(error.message)}</p>
-      </div>
-    `;
+    if (request.sequence !== paperLoadSequence) return;
+    feedLoadController.abort();
+    failPaperLoad(label, () => loadPapersByDateRange(startDate, endDate), error);
   }
 }
 

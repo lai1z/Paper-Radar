@@ -17,6 +17,11 @@ class BuildChatOpenAIKwargsTests(unittest.TestCase):
         self.assertEqual("sk-test-key", kwargs["api_key"])
         self.assertNotIn("extra_body", kwargs)
 
+    def test_requests_are_bounded_and_sdk_does_not_multiply_checkpoint_retries(self):
+        kwargs = build_chat_openai_kwargs("test", "https://example.com/v1", "test-key")
+        self.assertEqual(kwargs["timeout"], 120)
+        self.assertEqual(kwargs["max_retries"], 0)
+
     def test_volcengine_configuration_disables_thinking_with_extra_body(self):
         """Catches losing the Ark-specific request option required by the current model."""
         kwargs = build_chat_openai_kwargs(

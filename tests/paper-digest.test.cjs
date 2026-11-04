@@ -14,6 +14,12 @@ test('numeric claims require source values without confusing model names with me
   assert.equal(digest.results({...paper,abstract,key_results:[{finding:'V-JEPA2、GPT-4o 在1000.0次试验中用时20ms',setting:'1000次试验',evidence_quote:abstract}]}).length,1);
   assert.equal(digest.results({...paper,abstract,key_results:[{finding:'GPT-4o 在1000次试验中用时2e1ms',setting:'',evidence_quote:abstract}]}).length,1);
 });
+test('numeric intervals preserve valid endpoints while negative claims stay signed',()=>{
+  const abstract='Success improved by 70 -100 percentage points; correlations were -0.70 to -0.80.';
+  const result=finding=>digest.results({...paper,abstract,key_results:[{finding,setting:'',evidence_quote:abstract}]});
+  assert.equal(result('成功率提高70至100个百分点，相关系数为-0.70至-0.80。').length,1);
+  assert.equal(result('相关系数为0.70到0.80。').length,0);
+});
 test('bibliographic source keeps submission and collection dates separate and never invents missing dates',()=>{
   const original={...paper,id:'2610.39367v2',authorNames:['王小明','Smith, Jr., John'],published:'2026-10-01T12:34:56Z',date:'2026-11-02'};
   const before=JSON.stringify(original),html=digest.details(original);

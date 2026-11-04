@@ -25,6 +25,10 @@ def build_chat_openai_kwargs(model_name: str, base_url: str, api_key: str) -> di
         "model": model_name,
         "base_url": base_url,
         "api_key": api_key,
+        # The per-paper checkpoint loop owns retries. Avoid multiplying those
+        # attempts by SDK retries or waiting indefinitely for a stalled model.
+        "timeout": 120,
+        "max_retries": 0,
     }
     hostname = urlparse(base_url).hostname or ""
     if hostname.endswith("volces.com"):

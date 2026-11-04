@@ -411,3 +411,12 @@
     width: 100%;
   }
 } 
+
+/* Preference editing status stays visible when saving is unavailable. */
+#preferencesStatus { margin:20px 0 8px; padding:12px 14px; border-radius:8px; background:#edf4fa; color:#284764; line-height:1.7; font-size:14px; }
+#preferencesStatus.preferences-error { background:#fff4e4; color:#7d4a12; }
+.preferences-local-note { font-size:12px; color:#64748b; line-height:1.7; }
+.preferences-copy-dialog { margin:auto; width:min(600px,90vw); border:1px solid #dce5ec; border-radius:12px; padding:24px; }
+.preferences-copy-dialog textarea { display:block; width:100%; min-height:160px; margin:16px 0; padding:12px; resize:vertical; }
+.preferences-copy-dialog::backdrop { background:#15263d66; }
+.settings-actions { flex-wrap:wrap; gap:10px; }

@@ -31,6 +31,7 @@ const item={id:'2610.39367',title:'Utility-WAM: 按需生成未来，改善机�
     const output=path.resolve(root,'../../digest-preview');fs.mkdirSync(output,{recursive:true});
     await page.screenshot({path:path.join(output,'cards-desktop.png')});
     await page.locator('.paper-card').first().getByRole('button',{name:'+ 加入待读',exact:true}).click();
+    await page.waitForFunction(()=>ReadingList.status('2610.39367')==='pending');
     await page.locator('.paper-card').first().click();
     assert(await page.locator('#paperModal.active').count());
     assert.equal(await page.locator('iframe').count(),0);
@@ -51,9 +52,11 @@ const item={id:'2610.39367',title:'Utility-WAM: 按需生成未来，改善机�
     assert.equal(await page.locator('.digest-saved-dialog iframe').count(),0);
     const reader=page.locator('.digest-saved-dialog');
     await reader.getByRole('button',{name:'标记已读',exact:true}).click();
+    await page.waitForFunction(()=>ReadingList.status('2610.39367')==='read');
     assert.equal(await page.evaluate(()=>ReadingList.status('2610.39367')),'read');
     assert((await reader.getByRole('status').innerText()).includes('已标记为已读'));
     await reader.getByRole('button',{name:'放回待读',exact:true}).click();
+    await page.waitForFunction(()=>ReadingList.status('2610.39367')==='pending');
     assert.equal(await page.evaluate(()=>ReadingList.status('2610.39367')),'pending');
     await page.getByRole('button',{name:'返回清单',exact:true}).click();
     assert.equal(await page.locator('.rl-dialog').evaluate(el=>el.contains(document.activeElement)),true);

@@ -76,6 +76,19 @@ class RefreshTests(unittest.TestCase):
             self.assertEqual(processor.call_args.args[0]['id'], paper(1)['id'])
             self.assertEqual(len(results), 1)
 
+    def test_status_counts_unfinished_queue_without_stale_or_refresh_duplicates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            history, current, checkpoints = root / 'history', root / 'current', root / 'checkpoints'
+            write_records(history / '2026-11-03_AI_enhanced_Chinese.jsonl', [paper(1)])
+            write_records(current / '2026-11-04_AI_enhanced_Chinese.jsonl', [paper(2)])
+            atomic_write(checkpoints / 'old.json', {'success': {}, 'pending': {p['id']: p for p in [paper(1), paper(3)]}})
+            atomic_write(checkpoints / 'active.json', {'success': {}, 'pending': {p['id']: p for p in [paper(2), paper(3)]}})
+            atomic_write(checkpoints / 'refresh-date.json', {'success': {}, 'pending': {paper(4)['id']: paper(4)}})
+            report = build_report(history, current, 'Chinese', True, 400, 'daily', 'https://example.com/run', checkpoints)
+            self.assertEqual(report['pending_paper_count'], 1)
+            self.assertEqual(report['latest_paper_count'], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
