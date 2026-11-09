@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "checked_at": "2026-11-08T07:40:13.461324+00:00",
-  "run_url": "https://github.com/lai1z/Paper-Radar/actions/runs/42459621482",
+  "checked_at": "2026-11-09T08:19:28.058928+00:00",
+  "run_url": "https://github.com/lai1z/Paper-Radar/actions/runs/42584846011",
   "mode": "daily",
-  "latest_publication_date": "2026-11-08",
+  "latest_publication_date": "2026-11-09",
   "latest_paper_count": 50,
   "published_this_run": true,
-  "source_count": 538,
+  "source_count": 508,
   "digest_source": "abstract",
   "pending_paper_count": 0
 }
