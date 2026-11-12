@@ -24,6 +24,9 @@ let feedLoadState = 'idle';
 let feedLoadController = null;
 let datePickerReturnFocus = null;
 let feedUpdateStatus = null;
+let searchRenderTimer = null;
+let renderedPaperCount = 0;
+const PAPER_BATCH_SIZE = 50;
 let textSearchQuery = ''; // 实时文本搜索查询
 let previousActiveKeywords = null; // 文本搜索激活时，暂存之前的关键词激活集合
 let previousActiveAuthors = null; // 文本搜索激活时，暂存之前的作者激活集合
@@ -65,6 +68,8 @@ function showFeedNotice(message, retry, detail = '') {
 }
 
 function beginPaperLoad(label) {
+  clearTimeout(searchRenderTimer); searchRenderTimer = null;
+  document.getElementById('paperPagination').hidden = true;
   feedLoadController?.abort(); feedLoadController = new AbortController();
   const sequence = ++paperLoadSequence;
   feedLoadState = 'loading'; paperData = {}; currentFilteredPapers = [];
@@ -94,6 +99,7 @@ function readPreferenceList(key) {
 }
 
 function initResearchWorkspace() {
+  document.getElementById('loadMorePapers').addEventListener('click', () => appendPaperBatch(true));
   try {
     const saved = JSON.parse(localStorage.getItem('paper-radar.workspace.v1') || '{}');
     currentView = saved.layout === 'compact' ? 'compact' : 'grid';
@@ -162,7 +168,7 @@ function updateResearchWorkspace(allPapers, categoryPapers, visiblePapers) {
   document.getElementById('researchTopics').innerHTML = topicItems.map(([topic, count]) => `<button type="button" class="workspace-topic" data-topic="${PaperDigest.escape(topic)}" aria-pressed="${topic === currentTopic}">${topic === 'all' ? '全部主题' : topic === 'untagged' ? '未标注主题' : PaperDigest.escape(topic)}<span>${count}</span></button>`).join('');
   const hasFilter = currentCategory !== 'all' || currentTopic !== 'all' || !!textSearchQuery || onlyMatched;
   const matched = categoryPapers.filter(paper => paper.isMatched).length;
-  document.getElementById('resultSummary').textContent = `显示 ${visiblePapers.length} / ${allPapers.length} 篇${!textSearchQuery && (activeAuthors.length || activeKeywords.length) ? ` · ${matched} 篇匹配偏好` : ''}${currentView === 'compact' ? ' · 速览' : ''}`;
+  document.getElementById('resultSummary').textContent = `符合条件 ${visiblePapers.length} / ${allPapers.length} 篇${!textSearchQuery && (activeAuthors.length || activeKeywords.length) ? ` · ${matched} 篇匹配偏好` : ''}${currentView === 'compact' ? ' · 速览' : ''}`;
   document.getElementById('resetPaperFilters').hidden = !hasFilter;
   renderFeedUpdateStatus();
 }
@@ -801,15 +807,24 @@ function initEventListeners() {
       searchInput.focus();
     });
 
-    const handleInput = () => {
+    let composing = false;
+    const applySearch = (immediate = false) => {
       textSearchQuery = searchInput.value.trim();
       searchClear.style.display = textSearchQuery ? 'inline-flex' : 'none';
-      renderPapers();
+      clearTimeout(searchRenderTimer);
+      if (immediate) { renderPapers(); return; }
+      if (feedLoadState === 'ready') document.getElementById('paperContainer').setAttribute('aria-busy', 'true');
+      searchRenderTimer = setTimeout(renderPapers, 120);
     };
-    searchInput.addEventListener('input', handleInput);
+    searchInput.addEventListener('compositionstart', () => { composing = true; clearTimeout(searchRenderTimer); });
+    searchInput.addEventListener('compositionend', () => { composing = false; applySearch(); });
+    searchInput.addEventListener('input', event => { if (!composing && !event.isComposing) applySearch(); });
+    searchInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !composing && !event.isComposing) { event.preventDefault(); applySearch(true); }
+    });
     searchClear.addEventListener('click', () => {
-      searchInput.value = '';
-      handleInput();
+      searchInput.value = ''; composing = false;
+      applySearch(true);
       searchInput.focus();
     });
 
@@ -1242,23 +1257,33 @@ function formatAuthorsForCard(authorsString, authorTerms = []) {
 }
 
 function renderPapers() {
+  clearTimeout(searchRenderTimer); searchRenderTimer = null;
   if (!['idle', 'ready'].includes(feedLoadState)) return;
   const container = document.getElementById('paperContainer');
   container.innerHTML = '';
+  container.setAttribute('aria-busy', 'false');
+  container.dataset.renderedQuery = textSearchQuery;
+  renderedPaperCount = 0;
+  document.getElementById('paperPagination').hidden = true;
   container.className = `paper-container ${currentView === 'compact' ? 'compact-view' : ''}`;
   
   const allPapers = ResearchWorkspace.unique(Object.values(paperData).flat());
   const papers = allPapers.filter(paper => currentCategory === 'all' || paper.category.includes(currentCategory));
+  const queryMatcher = ResearchWorkspace.createQueryMatcher(textSearchQuery);
+  const queryMatches = new WeakSet();
   const markedPapers = papers.map(paper => {
     const keywords = activeKeywords.filter(keyword => paperMatchesKeyword(paper, keyword));
     const authors = activeAuthors.filter(author => paperMatchesAuthor(paper, author));
     const reasons = [];
     if (keywords.length) reasons.push(`关键词: ${keywords.join(', ')}`);
     if (authors.length) reasons.push(`作者: ${authors.join(', ')}`);
-    if (textSearchQuery && ResearchWorkspace.matchesQuery(paper, textSearchQuery)) reasons.push(`搜索: ${textSearchQuery}`);
-    return {...paper, isMatched: reasons.length > 0, matchReason: reasons};
+    const searchMatch = queryMatcher(paper);
+    if (textSearchQuery && searchMatch) reasons.push(`搜索: ${textSearchQuery}`);
+    const marked = {...paper, isMatched: reasons.length > 0, matchReason: reasons};
+    if (searchMatch) queryMatches.add(marked);
+    return marked;
   });
-  const filteredPapers = ResearchWorkspace.select(markedPapers, {topic: currentTopic, query: textSearchQuery, onlyMatched, sort: paperSort});
+  const filteredPapers = ResearchWorkspace.select(markedPapers, {topic: currentTopic, queryMatcher: paper => queryMatches.has(paper), onlyMatched, sort: paperSort});
   updateResearchWorkspace(allPapers, markedPapers, filteredPapers);
 
   // 存储当前过滤后的论文列表，用于箭头键导航
@@ -1273,7 +1298,22 @@ function renderPapers() {
     return;
   }
   
-  filteredPapers.forEach((paper, index) => {
+  appendPaperBatch();
+}
+
+function appendPaperBatch(focusNew = false) {
+  if (!['idle', 'ready'].includes(feedLoadState)) return;
+  const container = document.getElementById('paperContainer');
+  const start = renderedPaperCount;
+  const end = Math.min(start + PAPER_BATCH_SIZE, currentFilteredPapers.length);
+  const fragment = document.createDocumentFragment();
+  const titleSummaryTerms = [
+    ...expandKeywordsForHighlight(activeKeywords),
+    ...(textSearchQuery ? getKeywordAliases(textSearchQuery) : [])
+  ];
+  const authorTerms = [...activeAuthors, ...(textSearchQuery ? [textSearchQuery.trim()] : [])];
+  currentFilteredPapers.slice(start, end).forEach((paper, offset) => {
+    const index = start + offset;
     const paperCard = document.createElement('div');
     // 添加匹配高亮类
     paperCard.className = `paper-card ${paper.isMatched ? 'matched-paper' : ''}`;
@@ -1294,15 +1334,6 @@ function renderPapers() {
       paper.category.map(cat => `<span class="category-tag">${PaperDigest.escape(cat)}</span>`).join('') : 
       `<span class="category-tag">${PaperDigest.escape(paper.category)}</span>`;
     
-    // 组合需要高亮的词：关键词 + 文本搜索
-    const titleSummaryTerms = [];
-    if (activeKeywords.length > 0) {
-      titleSummaryTerms.push(...expandKeywordsForHighlight(activeKeywords));
-    }
-    if (textSearchQuery && textSearchQuery.trim().length > 0) {
-      titleSummaryTerms.push(...getKeywordAliases(textSearchQuery));
-    }
-
     // 高亮标题和摘要（关键词与文本搜索）
     const highlightedTitle = titleSummaryTerms.length > 0 
       ? highlightMatches(paper.title, titleSummaryTerms, 'keyword-highlight') 
@@ -1311,11 +1342,6 @@ function renderPapers() {
       ? highlightMatches(paper.summary, titleSummaryTerms, 'keyword-highlight') 
       : PaperDigest.escape(paper.summary);
 
-    // 高亮作者（作者过滤 + 文本搜索）
-    const authorTerms = [];
-    if (activeAuthors.length > 0) authorTerms.push(...activeAuthors);
-    if (textSearchQuery && textSearchQuery.trim().length > 0) authorTerms.push(textSearchQuery.trim());
-    
     // 格式化作者列表（应用截断规则和高亮）
     const formattedAuthors = formatAuthorsForCard(paper.authors, authorTerms);
     
@@ -1367,8 +1393,20 @@ function renderPapers() {
       showPaperDetails(paper, index + 1);
     });
     
-    container.appendChild(paperCard);
+    fragment.appendChild(paperCard);
   });
+  container.append(fragment);
+  renderedPaperCount = end;
+  const pagination = document.getElementById('paperPagination');
+  pagination.hidden = currentFilteredPapers.length <= PAPER_BATCH_SIZE;
+  document.getElementById('renderedPaperCount').textContent = `已展开 ${end} / ${currentFilteredPapers.length} 篇，上方搜索框覆盖全部结果。`;
+  const more = document.getElementById('loadMorePapers');
+  more.disabled = end >= currentFilteredPapers.length;
+  more.textContent = more.disabled ? '全部已展开' : `继续显示 ${Math.min(PAPER_BATCH_SIZE, currentFilteredPapers.length - end)} 篇`;
+  if (focusNew && end > start) {
+    const first = container.children[start];
+    first.focus({preventScroll: true}); first.scrollIntoView({block: 'start', behavior: 'instant'});
+  }
 }
 
 function showPaperDetails(paper, paperIndex) {

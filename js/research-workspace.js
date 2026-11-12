@@ -7,6 +7,9 @@
   'use strict';
   const TOPICS = ['机器人策略', '感知与导航', '操作与运动', '世界模型', '规划与推理', '数据与仿真', '评测', '效率与部署'];
   const normalize = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[\u2010-\u2015_-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const SEARCH_FIELDS = ['id', 'title', 'authors', 'category', 'abstract', 'details', 'summary', 'core_method', 'motivation', 'method', 'result', 'conclusion'];
+  let searchIndex = new WeakMap(), indexedPapers = 0, indexedCharacters = 0;
+  const MAX_INDEXED_PAPERS = 2048, MAX_INDEXED_CHARACTERS = 8 * 1024 * 1024;
   function identity(paper) {
     return String(paper.id || paper.url || '').replace(/^https?:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf|html)\//i, '').replace(/\.pdf$/i, '').replace(/v\d+$/i, '').toLowerCase();
   }
@@ -32,17 +35,47 @@
     });
     return {topics: [...counts].filter(([, count]) => count > 0), untagged};
   }
-  function matchesQuery(paper, query) {
-    const terms = String(query || '').split(/[|｜]/).map(normalize).filter(Boolean);
-    if (!terms.length) return true;
-    const findings = Array.isArray(paper.key_results) ? paper.key_results.map(row => row?.finding || '') : [];
-    const haystack = normalize([paper.id, paper.title, paper.authors, paper.category, paper.abstract, paper.details, paper.summary, paper.core_method, paper.motivation, paper.method, paper.result, paper.conclusion, ...findings].join(' '));
-    return terms.some(term => haystack.includes(term));
+  function searchableText(paper) {
+    // Keep a cheap dependency snapshot so even in-place edits of author/category
+    // arrays and result findings cannot leave the index showing outdated text.
+    // Joining these small fields is cheaper than normalizing whole abstracts
+    // and method descriptions on every key press.
+    const parts = SEARCH_FIELDS.map(field => String(paper[field] ?? ''));
+    if (Array.isArray(paper.key_results)) parts.push(...paper.key_results.map(row => String(row?.finding || '')));
+    const cached = searchIndex.get(paper);
+    if (cached && cached.parts.length === parts.length && parts.every((value, index) => value === cached.parts[index])) return cached.haystack;
+    const haystack = normalize(parts.join(' '));
+    // Weak keys avoid retaining abandoned feeds. These additional limits also
+    // bound index overhead while a large date range remains reachable.
+    if (haystack.length > MAX_INDEXED_CHARACTERS) {
+      if (cached) { searchIndex.delete(paper); indexedPapers--; indexedCharacters -= cached.haystack.length; }
+      return haystack;
+    }
+    let replacing = !!cached;
+    if ((!cached && indexedPapers >= MAX_INDEXED_PAPERS) || indexedCharacters - (cached?.haystack.length || 0) + haystack.length > MAX_INDEXED_CHARACTERS) {
+      searchIndex = new WeakMap(); indexedPapers = 0; indexedCharacters = 0; replacing = false;
+    }
+    indexedCharacters += haystack.length - (replacing ? cached.haystack.length : 0);
+    if (!replacing) indexedPapers++;
+    searchIndex.set(paper, {parts, haystack});
+    return haystack;
   }
-  function select(papers, {topic = 'all', query = '', onlyMatched = false, sort = 'relevance'} = {}) {
+  function createQueryMatcher(query) {
+    const terms = String(query || '').split(/[|｜]/).map(normalize).filter(Boolean);
+    if (!terms.length) return () => true;
+    return paper => {
+      const haystack = searchableText(paper);
+      return terms.some(term => haystack.includes(term));
+    };
+  }
+  function matchesQuery(paper, query) {
+    return createQueryMatcher(query)(paper);
+  }
+  function select(papers, {topic = 'all', query = '', onlyMatched = false, sort = 'relevance', queryMatcher} = {}) {
+    const matches = typeof queryMatcher === 'function' ? queryMatcher : createQueryMatcher(query);
     return unique(papers).filter(paper =>
       (topic === 'all' || (topic === 'untagged' ? !topics(paper).length : topics(paper).includes(topic))) &&
-      matchesQuery(paper, query) && (!onlyMatched || paper.isMatched)
+      matches(paper) && (!onlyMatched || paper.isMatched)
     ).sort((a, b) => {
       if (sort === 'published') {
         const dateA = Date.parse(a.published || '') || 0, dateB = Date.parse(b.published || '') || 0;
@@ -51,5 +84,5 @@
       return Number(!!b.isMatched) - Number(!!a.isMatched) || (b.relevance || 0) - (a.relevance || 0);
     });
   }
-  return {TOPICS, identity, unique, topics, topicCounts, matchesQuery, select};
+  return {TOPICS, identity, unique, topics, topicCounts, createQueryMatcher, matchesQuery, select};
 });

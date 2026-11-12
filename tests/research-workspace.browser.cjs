@@ -27,8 +27,8 @@ const records=[make('2610.12345v2','Robot Dynamics: 动作条件世界模型',['
   assert.equal(await page.locator('.paper-card').count(),3);
   assert((await page.locator('#workspaceFreshness').innerText()).includes('最近成功检查'));
   assert((await page.locator('.paper-card').first().innerText()).includes('Jev'));
-  await page.locator('#textSearchInput').fill('nothing | jev');assert.equal(await page.locator('.paper-card').count(),1);
-  await page.locator('#textSearchInput').fill('不存在');assert.equal(await page.locator('.paper-card').count(),0);
+  await page.locator('#textSearchInput').fill('nothing | jev');await page.waitForFunction(()=>document.getElementById('paperContainer').dataset.renderedQuery==='nothing | jev');assert.equal(await page.locator('.paper-card').count(),1);
+  await page.locator('#textSearchInput').fill('不存在');await page.waitForFunction(()=>document.getElementById('paperContainer').dataset.renderedQuery==='不存在');assert.equal(await page.locator('.paper-card').count(),0);
   await page.locator('#resetPaperFilters').click();assert.equal(await page.locator('.paper-card').count(),3);
   await page.locator('[data-topic="机器人策略"]').click();assert.equal(await page.locator('.paper-card').count(),1);
   await page.locator('#resetPaperFilters').click();

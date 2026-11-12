@@ -39,10 +39,42 @@
     if (data.version !== 1 || !Array.isArray(data.papers)) throw new Error('备份格式不支持');
     return data.papers.map(clean);
   }
-  let papers = [], dialog, list, search, tabs, opener, toast, returnFocus, storageNotice;
+  let papers = [], paperById = new Map(), dialog, list, search, tabs, opener, toast, returnFocus, storageNotice;
   let mutationQueue = Promise.resolve(), pendingWrites = 0;
+  let pendingUpgrades = new Map(), upgradeScheduled = false;
   let pendingListFocus = null;
   let view = 'pending';
+  function setPapers(next) {
+    papers = next;
+    paperById = new Map();
+    // Keep the same first-record behavior as Array.find for legacy duplicates.
+    for (const paper of papers) if (!paperById.has(paper.id)) paperById.set(paper.id, paper);
+  }
+  const needsUpgrade = (saved, incoming) => !!incoming.tldr &&
+    (!saved.tldr || (!saved.key_results.length && incoming.key_results?.length));
+  function flushUpgrades() {
+    if (!pendingUpgrades.size) { upgradeScheduled = false; return; }
+    const batch = pendingUpgrades; pendingUpgrades = new Map(); upgradeScheduled = false;
+    commit(items => {
+      let changed = false;
+      const next = items.map(saved => {
+        const incoming = batch.get(saved.id);
+        // Recheck the latest record inside the lock. A removed paper stays
+        // removed, and an already-upgraded snapshot is never overwritten.
+        if (!incoming || !needsUpgrade(saved, incoming)) return saved;
+        changed = true;
+        return clean({...saved, ...incoming, sourceId:incoming.sourceId || incoming.id || incoming.url,
+          status:saved.status, savedAt:saved.savedAt});
+      });
+      return changed ? next : items;
+    });
+  }
+  function scheduleUpgrade(id, paper) {
+    pendingUpgrades.set(id, paper);
+    if (upgradeScheduled) return;
+    upgradeScheduled = true;
+    queueMicrotask(flushUpgrades);
+  }
   function notify(message, action) {
     toast.replaceChildren(document.createTextNode(message));
     if (action) {
@@ -63,9 +95,10 @@
     pendingWrites++;
     const transaction = async () => {
       const write = () => {
-        const next = update(read()); // Read again while holding the cross-tab lock.
-        localStorage.setItem(KEY, JSON.stringify({version: 1, papers: next}));
-        papers = next;
+        const current = read(); // Read again while holding the cross-tab lock.
+        const next = update(current);
+        if (next !== current) localStorage.setItem(KEY, JSON.stringify({version: 1, papers: next}));
+        setPapers(next);
         setStorageNotice(); refresh();
         return true;
       };
@@ -116,20 +149,18 @@
   }
   function open() {
     returnFocus = document.activeElement;
-    try { papers = read(); setStorageNotice(); }
+    try { setPapers(read()); setStorageNotice(); }
     catch { setStorageNotice('清单暂时无法读取，原始数据仍保留。请尝试「导出备份」，不要清理网站数据。'); }
     render(); dialog.showModal(); search.focus();
   }
   function mount(host, paper) {
     let id;
     try { id = normalizeId(paper.id || paper.url); } catch { return; }
-    const saved = papers.find(p => p.id === id);
-    if (saved && paper.tldr && (!saved.tldr || (!saved.key_results.length && paper.key_results?.length))) {
-      commit(items => items.map(p => p.id === id ? clean({...p, ...paper, sourceId:paper.sourceId || paper.id || paper.url, status:p.status, savedAt:p.savedAt}) : p));
-    }
+    const saved = paperById.get(id);
+    if (saved && needsUpgrade(saved, paper)) scheduleUpgrade(id, paper);
     const control = button('', async event => {
       event.stopPropagation();
-      if (papers.some(p => p.id === id)) { open(); return; }
+      if (paperById.has(id)) { open(); return; }
       if (await commit(items => items.some(p => p.id === id) ? items : [clean({...paper, id, sourceId:paper.sourceId || paper.id || paper.url, status: 'pending', savedAt: Date.now()}), ...items])) {
         notify('已加入待读。可从顶部「待读」继续阅读。');
       }
@@ -138,7 +169,7 @@
     host.append(control); updateButton(control);
   }
   function updateButton(control) {
-    const saved = papers.find(p => p.id === control.dataset.readingId);
+    const saved = paperById.get(control.dataset.readingId);
     control.textContent = saved ? (saved.status === 'read' ? '✓ 已读 · 查看清单' : '✓ 已加入待读') : '+ 加入待读';
     control.setAttribute('aria-label', control.textContent);
     control.classList.toggle('rl-saved', !!saved);
@@ -178,7 +209,7 @@
     const previous = button('上一篇', () => { position--; show(); });
     const next = button('下一篇', () => { position++; show(); });
     const mark = button('', async () => {
-      const current = papers.find(item => item.id === sequence[position]);
+      const current = paperById.get(sequence[position]);
       if (!current) { state.textContent = '这篇论文已从清单移除，当前仍可查看保存时的解读。'; mark.disabled = true; return; }
       const nextStatus = current.status === 'read' ? 'pending' : 'read';
       if (await commit(items => items.map(item => item.id === current.id ? {...item, status:nextStatus} : item))) {
@@ -193,7 +224,7 @@
       state.textContent = status === 'read' ? '已读 · 可随时放回待读' : '待读 · 阅读后可手动标记已读';
     }
     function show() {
-      const saved = papers.find(item => item.id === sequence[position]);
+      const saved = paperById.get(sequence[position]);
       const current = saved || snapshots.get(sequence[position]);
       title.textContent = current.title;
       updateState(current.status);
@@ -266,7 +297,7 @@
     if (!header) return;
     toast = element('div', '', 'rl-toast'); toast.setAttribute('role', 'status');
     document.body.append(toast);
-    try { papers = read(); } catch { notify('无法读取待读清单，请保留当前数据并尝试导出备份。'); }
+    try { setPapers(read()); } catch { notify('无法读取待读清单，请保留当前数据并尝试导出备份。'); }
     opener = button('待读 (0)', open); opener.id = 'readingListButton'; header.prepend(opener);
     dialog = element('dialog', '', 'rl-dialog'); dialog.setAttribute('aria-labelledby', 'readingListTitle');
     storageNotice = element('p', '', 'rl-storage-notice'); storageNotice.hidden = true; storageNotice.setAttribute('role', 'status');
@@ -282,6 +313,7 @@
     }
     const backups = element('div', '', 'rl-actions');
     backups.append(button('导出备份', async () => {
+      flushUpgrades();
       await mutationQueue;
       try {
         // Preserve the exact stored bytes, even if a malformed record prevents reading.
@@ -325,11 +357,12 @@
       copyText, button('全选复制内容', () => { copyText.focus(); copyText.select(); }),
       button('收起复制文本', () => { manualCopy.hidden = true; copyText.value = ''; }));
     function exportSelection() {
-      papers = read();
+      setPapers(read());
       const selected = scope.value === 'all' ? papers : scope.value === 'pending' ? papers.filter(p => p.status === 'pending') : visiblePapers();
       return window.ZoteroExport.build(selected);
     }
     async function copySelection(withPDF) {
+      flushUpgrades();
       await mutationQueue;
       manualCopy.hidden = true; copyText.value = '';
       let result;
@@ -355,6 +388,7 @@
     metadata.append(element('summary', '仅导出文献信息（不含 PDF）'));
     const metadataActions = element('div', '', 'rl-actions');
     metadataActions.append(button('复制文献信息', () => copySelection(false)), button('下载 CSL JSON', async () => {
+      flushUpgrades();
       await mutationQueue;
       try {
         const result = exportSelection();
@@ -382,7 +416,7 @@
     document.body.append(dialog); refresh();
     window.addEventListener('storage', event => {
       if (event.key === KEY || event.key === null) {
-        try { papers = read(); setStorageNotice(); refresh(); }
+        try { setPapers(read()); setStorageNotice(); refresh(); }
         catch { setStorageNotice('其他窗口的清单数据无法读取。已保留本页内容，请尝试导出原始备份。'); notify('其他窗口的清单数据无法读取。'); }
       }
     });
@@ -391,7 +425,7 @@
     });
   }
   function status(value) {
-    try { return papers.find(paper => paper.id === normalizeId(value))?.status || ''; }
+    try { return paperById.get(normalizeId(value))?.status || ''; }
     catch { return ''; }
   }
   window.ReadingList = {mount, open, status};

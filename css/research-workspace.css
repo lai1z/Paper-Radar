@@ -1,7 +1,7 @@
 /* Reading workspace: restrained surfaces, clear hierarchy, and predictable controls. */
 :root { --workspace-ink:#172b3d; --workspace-muted:#586b7d; --workspace-line:#dce5ec; --workspace-accent:#355d8d; }
 body { background:#f5f7fa; }
-header { background:rgba(255,255,255,.96); backdrop-filter:blur(12px); }
+header { background:#fff; backdrop-filter:none; -webkit-backdrop-filter:none; }
 .header-content { max-width:1280px; padding:12px 28px; gap:20px; }
 .header-center { position:static; transform:none; margin-right:auto; order:-1; }
 .header-left { display:none; }
@@ -97,6 +97,10 @@ main { max-width:1280px; padding:0 28px 32px; }
 .paper-navigation .navigation-hint { font-size:11px; color:#6e8093; margin:0 5px; }
 .paper-modal-footer { gap:14px; }
 .loading-container { grid-column:1/-1; }
+.paper-pagination {display:flex; flex-direction:column; align-items:center; gap:12px; padding:20px 16px 36px; overflow-anchor:none;}
+.paper-pagination[hidden] {display:none;}
+.paper-pagination p {margin:0; font-size:13px; color:var(--workspace-muted);}
+.paper-card .keyword-highlight,.paper-card .author-highlight {animation:none !important; transition:none;}
 .feed-notice { gap:12px; min-height:180px; }
 .feed-notice .workspace-button { margin-top:10px; }
 .date-picker-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; }

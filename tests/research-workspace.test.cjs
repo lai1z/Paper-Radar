@@ -32,3 +32,50 @@ test('filtering is explicit and sort uses source publication date, not collectio
   assert.equal(workspace.select(rows,{topic:'世界模型',query:'robot'}).length,0);
   assert.equal(rows.length,2);
 });
+
+test('compiled searches preserve Unicode aliases and notice in-place metadata changes',()=>{
+  const paper={id:'2611.12345',title:'Ｖ－ＪＥＰＡ navigation',authors:['Original Author'],category:['cs.RO'],abstract:'机器人 original abstract',key_results:[{finding:'Original finding'}]};
+  const before=JSON.stringify(paper);
+  assert(workspace.createQueryMatcher('missing ｜ v-jepa')(paper));
+  assert(workspace.createQueryMatcher('机器人')(paper));
+  const original=workspace.createQueryMatcher('original');
+  assert(original(paper));
+  assert.equal(JSON.stringify(paper),before);
+  paper.title='Changed title';paper.abstract='New abstract';paper.authors[0]='New Author';paper.key_results[0].finding='Revised finding';
+  assert(!original(paper));
+  assert(workspace.createQueryMatcher('new author | missing')(paper));
+  assert(workspace.createQueryMatcher('revised finding')(paper));
+  paper.key_results.push({finding:'Nested addition'});
+  assert(workspace.createQueryMatcher('nested addition')(paper));
+  paper.category[0]='cs.AI';
+  assert(!workspace.matchesQuery(paper,'cs.RO'));
+  assert(workspace.matchesQuery(paper,'cs.AI'));
+  paper.key_results=[];
+  assert(!workspace.matchesQuery(paper,'nested addition'));
+});
+
+test('repeated searches reuse normalized full text and reindex changed sources',()=>{
+  const paper={id:'2611.98765',abstract:'Long source context. '.repeat(1000)+'robot'};
+  const original=String.prototype.normalize;
+  let fullTextNormalizations=0;
+  String.prototype.normalize=function(...args){
+    if(this.length>10000)fullTextNormalizations++;
+    return original.apply(this,args);
+  };
+  try{
+    for(let index=0;index<100;index++)assert(workspace.createQueryMatcher('robot | 世界模型')(paper));
+    assert.equal(fullTextNormalizations,1);
+    paper.abstract='New source context. '.repeat(1000)+'planning';
+    assert(!workspace.matchesQuery(paper,'robot'));
+    assert(workspace.matchesQuery(paper,'planning'));
+    assert.equal(fullTextNormalizations,2);
+  }finally{String.prototype.normalize=original;}
+});
+
+test('selection can reuse a caller-computed query result without searching marked copies again',()=>{
+  const first={id:'1',title:'First',isMatched:true},second={id:'2',title:'Second',isMatched:false};
+  const accepted=new WeakSet([second]);let calls=0;
+  const selected=workspace.select([first,second],{query:'does not appear',queryMatcher:paper=>{calls++;return accepted.has(paper);}});
+  assert.deepEqual(selected,[second]);assert.equal(calls,2);
+  assert.equal(workspace.select([first,second],{onlyMatched:true,queryMatcher:paper=>accepted.has(paper)}).length,0);
+});
