@@ -199,6 +199,7 @@
       updateState(current.status);
       mark.disabled = !saved;
       if (!saved) state.textContent = '这篇论文已从清单移除，当前仍可查看保存时的解读。';
+      PaperDigest.detach(body);
       body.innerHTML = PaperDigest.details(current); PaperDigest.attach(body, current);
       previous.disabled = position === 0; next.disabled = position === sequence.length - 1;
       positionLabel.textContent = `${position + 1} / ${sequence.length} · 本次清单`;
@@ -208,9 +209,10 @@
     savedDialog.append(heading, state, body, actions); document.body.append(savedDialog);
     savedDialog.addEventListener('keydown', e => e.stopPropagation());
     savedDialog.addEventListener('close', () => {
+      PaperDigest.detach(body);
       savedDialog.remove();
       const target = trigger?.isConnected ? trigger : list.querySelector(`[data-saved-open="${sequence[position]}"]`) || search;
-      target?.focus();
+      target?.focus({preventScroll: true});
     }, {once:true});
     show();
     savedDialog.showModal();

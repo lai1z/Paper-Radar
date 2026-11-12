@@ -1402,7 +1402,8 @@ function showPaperDetails(paper, paperIndex) {
   const modalContent = PaperDigest.details(paper);
 
   // Update modal content
-  document.getElementById('modalBody').innerHTML = modalContent;
+  PaperDigest.detach(modalBody);
+  modalBody.innerHTML = modalContent;
   PaperDigest.attach(modalBody, paper);
   const sourcePdf = PaperDigest.pdfUrl(paper);
   const sourceAbs = sourcePdf ? sourcePdf.replace('/pdf/', '/abs/') : '';
@@ -1435,7 +1436,7 @@ function showPaperDetails(paper, paperIndex) {
   
   modal.classList.add('active');
   document.body.style.overflow = 'hidden';
-  if (!wasOpen) document.getElementById('closeModal').focus();
+  if (!wasOpen) document.getElementById('closeModal').focus({preventScroll: true});
 }
 
 function closeModal() {
@@ -1444,10 +1445,12 @@ function closeModal() {
   
   // 重置模态框的滚动位置
   modalBody.scrollTop = 0;
+  PaperDigest.detach(modalBody);
+  modalBody.replaceChildren();
   
   modal.classList.remove('active');
   document.body.style.overflow = '';
-  if (modalReturnFocus?.isConnected) modalReturnFocus.focus();
+  if (modalReturnFocus?.isConnected) modalReturnFocus.focus({preventScroll: true});
   modalReturnFocus = null;
 }
 

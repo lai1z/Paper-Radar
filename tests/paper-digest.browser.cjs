@@ -43,7 +43,12 @@ const item={id:'2610.39367',title:'Utility-WAM: 按需生成未来，改善机�
     await page.locator('.digest-nav').getByRole('button',{name:'原始摘要',exact:true}).click();
     assert.equal(await page.locator('.digest-abstract').evaluate(el=>el.open && el===document.activeElement),true);
     await page.locator('#modalBody .digest-pdf summary').click();
+    assert.equal(pdfRequests,0);
+    await page.locator('#modalBody [data-pdf-preview]').click();
     await page.waitForSelector('.digest-pdf-frame');assert.equal(pdfRequests,1);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.digest-pdf-frame').count(),0);
+    assert.equal(await page.locator('#paperModal.active').count(),1);
     await page.locator('#closeModal').click();
     await page.reload();await page.waitForSelector('.paper-card');
     await page.locator('#readingListButton').click();
@@ -59,6 +64,7 @@ const item={id:'2610.39367',title:'Utility-WAM: 按需生成未来，改善机�
     await page.waitForFunction(()=>ReadingList.status('2610.39367')==='pending');
     assert.equal(await page.evaluate(()=>ReadingList.status('2610.39367')),'pending');
     await page.getByRole('button',{name:'返回清单',exact:true}).click();
+    await reader.waitFor({state:'detached'});
     assert.equal(await page.locator('.rl-dialog').evaluate(el=>el.contains(document.activeElement)),true);
     await page.getByRole('button',{name:'关闭',exact:true}).click();
     await page.setViewportSize({width:390,height:844});
